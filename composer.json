@@ -2,7 +2,7 @@
   "name": "php-palm/project",
   "description": "PHP Palm starter project",
   "type": "project",
-  "version": "0.3.0",
+  "version": "0.1.0",
   "license": "MIT",
   "authors": [
     {
