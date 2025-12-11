@@ -48,7 +48,7 @@ class ModelCollection implements IteratorAggregate, Countable, JsonSerializable,
         return isset($this->items[$offset]);
     }
 
-    public function offsetGet($offset)
+    public function offsetGet(mixed $offset): mixed
     {
         return $this->items[$offset] ?? null;
     }

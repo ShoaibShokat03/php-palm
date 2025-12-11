@@ -1,19 +1,45 @@
 <?php
+
+/**
+ * PHP-Palm Framework Entry Point
+ * 
+ * Optimized with:
+ * - Application bootstrap caching (loads once, reuses)
+ * - Direct route lookup (hash map, O(1) for exact matches)
+ * - Comprehensive security scanning
+ * - Performance optimizations
+ */
+
+// Start execution time tracking
+$executionStartTime = microtime(true);
+
+// Enable OPcache optimizations
+if (function_exists('opcache_reset') && extension_loaded('Zend OPcache')) {
+    // OPcache is available - framework will benefit from bytecode caching
+}
+
 if (file_exists(__DIR__ . '/vendor/autoload.php')) {
     require __DIR__ . '/vendor/autoload.php';
 }
 
 use PhpPalm\Core\Route;
-use Dotenv\Dotenv;
-use App\Core\ModuleLoader;
-use App\Core\RouteConflictChecker;
+use App\Core\ApplicationBootstrap;
 use App\Core\PublicFileServer;
+use App\Core\Security\Session;
+use App\Core\Security\CSRF;
+use App\Core\Security\RateLimiter;
+use App\Core\Security\InputValidator;
+use App\Core\Security\FastSecurityScanner;
+use Frontend\Palm\Route as FrontendRoute;
+use Frontend\Palm\ErrorHandler;
+use Frontend\Palm\CsrfInjector;
+use Frontend\Palm\Translator;
 
 $requestUri = $_SERVER['REQUEST_URI'] ?? '/';
 $requestPath = parse_url($requestUri, PHP_URL_PATH) ?? '/';
 $publicFileServer = new PublicFileServer(__DIR__ . '/public');
 
-// -------- PUBLIC FILE SERVING --------
+// -------- PUBLIC FILE SERVING (Early Exit) --------
 if (in_array($_SERVER['REQUEST_METHOD'], ['GET', 'HEAD'], true)) {
     if ($publicFileServer->isPublicFileRequest($requestUri)) {
         $publicFileServer->serveFile($requestUri);
@@ -46,30 +72,141 @@ if (!$isApiRequest) {
         exit;
     }
 
-    $frontendEntry = __DIR__ . '/src/main.php';
-    if (file_exists($frontendEntry)) {
-        require $frontendEntry;
-    } else {
-        http_response_code(404);
-        echo 'Frontend entry (src/main.php) not found.';
+    // Initialize frontend routing
+    ErrorHandler::init();
+    
+    // Initialize internationalization
+    Translator::init(__DIR__);
+    
+    // Initialize auto CSRF injection
+    CsrfInjector::init();
+    
+    // Set security headers
+    require_once __DIR__ . '/app/Palm/SecurityHeaders.php';
+    \Frontend\Palm\SecurityHeaders::setDefaults();
+    
+    // Initialize Google Auth (if configured)
+    try {
+        require_once __DIR__ . '/app/Palm/GoogleAuth.php';
+        \Frontend\Palm\GoogleAuth::initFromEnv();
+    } catch (\Exception $e) {
+        // Google Auth not configured - silently ignore
     }
-    exit;
+    
+    // Serve assets from src/assets before routing
+    if (in_array($_SERVER['REQUEST_METHOD'], ['GET', 'HEAD'], true)) {
+        if (strpos($requestPath, '/src/assets/') === 0) {
+            $assetFile = __DIR__ . $requestPath;
+            if (file_exists($assetFile) && is_file($assetFile)) {
+                $ext = strtolower(pathinfo($assetFile, PATHINFO_EXTENSION));
+                $mimeTypes = [
+                    'js' => 'application/javascript',
+                    'css' => 'text/css',
+                    'json' => 'application/json',
+                    'png' => 'image/png',
+                    'jpg' => 'image/jpeg',
+                    'jpeg' => 'image/jpeg',
+                    'gif' => 'image/gif',
+                    'svg' => 'image/svg+xml',
+                    'ico' => 'image/x-icon',
+                    'woff' => 'font/woff',
+                    'woff2' => 'font/woff2',
+                    'ttf' => 'font/ttf',
+                    'eot' => 'application/vnd.ms-fontobject',
+                ];
+                $mimeType = $mimeTypes[$ext] ?? 'application/octet-stream';
+                
+                header('Content-Type: ' . $mimeType);
+                if (strpos(basename($assetFile), 'live-reload') !== false) {
+                    header('Cache-Control: no-cache');
+                } else {
+                    header('Cache-Control: public, max-age=3600');
+                }
+                header('Content-Length: ' . filesize($assetFile));
+                readfile($assetFile);
+                exit;
+            }
+        }
+    }
+    
+    FrontendRoute::init(__DIR__ . '/src');
+
+           // Load route definitions
+           $frontendEntry = __DIR__ . '/src/routes/main.php';
+           if (file_exists($frontendEntry)) {
+               require $frontendEntry;
+               
+               // Compile routes to cache if not already cached
+               if (!FrontendRoute::isRoutesLoaded()) {
+                   FrontendRoute::compileCache();
+               }
+           } else {
+               http_response_code(404);
+               echo 'Frontend entry (src/routes/main.php) not found.';
+               exit;
+           }
+
+           // Dispatch the route
+           FrontendRoute::dispatch($_SERVER['REQUEST_METHOD'] ?? 'GET', $_SERVER['REQUEST_URI'] ?? '/');
+           exit;
 }
 
 try {
-    // -------- SECURITY: Prevent direct file access --------
-    // Block direct access to PHP files except index.php
-    $requestedFile = $_SERVER['SCRIPT_NAME'] ?? '';
-    $requestedPath = $requestUri;
+    // -------- INITIALIZE BOOTSTRAP CACHE --------
+    // Load application state from cache (routes, modules, middlewares)
+    // This loads once and reuses on subsequent requests
+    ApplicationBootstrap::init();
+    $bootstrapState = ApplicationBootstrap::load();
 
-    // Extract the actual file being requested
-    $pathInfo = pathinfo(parse_url($requestedPath, PHP_URL_PATH));
-    $requestedExtension = $pathInfo['extension'] ?? '';
-    $requestedBasename = $pathInfo['basename'] ?? '';
+    // Check for route conflicts (from cache or fresh build)
+    if ($bootstrapState['has_conflicts'] ?? false) {
+        http_response_code(500);
+        header('Content-Type: application/json; charset=UTF-8');
+        $executionTime = microtime(true) - $executionStartTime;
 
-    // Load environment variables
-    $dotenv = Dotenv::createImmutable(__DIR__ . '/config/');
-    $dotenv->load();
+        echo json_encode([
+            'execution_time' => round($executionTime * 1000, 2),
+            'execution_time_unit' => 'ms',
+            'status' => 'error',
+            'message' => 'Route conflicts detected between api.php and module routes',
+            'conflicts' => $bootstrapState['conflicts'] ?? [],
+            'note' => 'Please remove duplicate routes from either api.php or the conflicting module(s)'
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+
+    // Load environment variables (if not already loaded by bootstrap)
+    if (!isset($_ENV['APP_ENV'])) {
+        $dotenv = \Dotenv\Dotenv::createImmutable(__DIR__ . '/config/');
+        $dotenv->load();
+    }
+
+    // -------- FAST SECURITY SCANNING (Optimized) --------
+    // Quick scan with early exit - no loops, direct threat detection
+    $securityScan = FastSecurityScanner::scanRequestFast();
+
+    if (!$securityScan['safe']) {
+        // Fast exit on threat detection
+        http_response_code(403);
+        $executionTime = microtime(true) - $executionStartTime;
+        error_log('Security threat detected from IP: ' . ($_SERVER['REMOTE_ADDR'] ?? 'unknown'));
+
+        exit(json_encode([
+            'execution_time' => round($executionTime * 1000, 2),
+            'execution_time_unit' => 'ms',
+            'status' => 'error',
+            'message' => 'Security threat detected'
+        ]));
+    }
+
+    // Pre-compute route path early (used later for direct routing)
+    $basePath = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'])), '/');
+    $targetRoutePath = str_replace($basePath . "/api", '', $requestUri);
+    $targetRoutePath = rtrim($targetRoutePath, '/');
+    if (empty($targetRoutePath)) {
+        $targetRoutePath = '/';
+    }
+    $requestMethod = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
 
     // -------- CORS CONFIG ----------
     $corsConfig = require __DIR__ . '/config/cors.php';
@@ -81,183 +218,221 @@ try {
         if (in_array($requestOrigin, $corsConfig['allowed_origins'])) {
             header("Access-Control-Allow-Origin: $requestOrigin");
         } else {
+            $executionTime = microtime(true) - $executionStartTime;
+
             header('HTTP/1.1 403 Forbidden');
-            exit(json_encode(['status' => 'error', 'message' => 'Origin not allowed']));
+            exit(json_encode([
+                'execution_time' => round($executionTime * 1000, 2),
+                'execution_time_unit' => 'ms',
+                'status' => 'error',
+                'message' => 'Origin not allowed'
+            ]));
         }
     }
 
-    header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
-    header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+    header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS, PATCH");
+    header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-CSRF-Token");
+    header("Access-Control-Allow-Credentials: true");
 
     if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
         http_response_code(200);
         exit();
     }
 
-    // -------- SECURITY MIDDLEWARE ----------
+    // -------- ENHANCED SECURITY MIDDLEWARE ----------
 
-    // 🛡 Secure Headers
+    // 🛡 Initialize Secure Session
+    Session::start();
+
+    // 🛡 Comprehensive Security Headers
     header("X-Content-Type-Options: nosniff");
     header("X-Frame-Options: DENY");
     header("X-XSS-Protection: 1; mode=block");
-    header("Referrer-Policy: no-referrer-when-downgrade");
-    header("Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; base-uri 'none'");
+    header("Referrer-Policy: strict-origin-when-cross-origin");
+    header("Permissions-Policy: geolocation=(), microphone=(), camera=()");
+    header("Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; base-uri 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:;");
+
+    // 🛡 HSTS (HTTP Strict Transport Security) - Only on HTTPS
+    if ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
+        (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https')
+    ) {
+        header("Strict-Transport-Security: max-age=31536000; includeSubDomains; preload");
+    }
 
     // 🛡 Block dangerous HTTP methods
-    $badMethods = ['TRACE', 'CONNECT', 'PATCH'];
+    $badMethods = ['TRACE', 'CONNECT', 'TRACK'];
     if (in_array($_SERVER['REQUEST_METHOD'], $badMethods)) {
         http_response_code(405);
         exit(json_encode(['status' => 'error', 'message' => 'Method not allowed']));
     }
 
-    // 🛡 Rate Limiting
-    function rateLimit($ip, $limit = 100, $seconds = 60)
-    {
-        $dir = __DIR__ . "/app/storage/ratelimit";
-        if (!is_dir($dir)) mkdir($dir, 0777, true);
+    // 🛡 Enhanced Rate Limiting
+    $rateLimitCheck = RateLimiter::checkIp('default');
+    if (!$rateLimitCheck['allowed']) {
+        http_response_code(429);
+        header("X-RateLimit-Limit: " . RateLimiter::getLimit('default'));
+        header("X-RateLimit-Remaining: 0");
+        header("X-RateLimit-Reset: " . $rateLimitCheck['reset']);
+        $executionTime = microtime(true) - $executionStartTime;
 
-        $safeIp = preg_replace('/[^a-zA-Z0-9\.\-]/', '_', $ip);
-        $file = "$dir/{$safeIp}.json";
-        $now = time();
-
-        if (!file_exists($file)) {
-            file_put_contents($file, json_encode(['count' => 1, 'start' => $now]));
-            return true;
-        }
-
-        $data = json_decode(file_get_contents($file), true);
-
-        if ($now - $data['start'] < $seconds) {
-            if ($data['count'] >= $limit) {
-                http_response_code(429);
-                echo json_encode(['status' => 'error', 'message' => 'Too many requests, slow down!']);
-                exit;
-            } else {
-                $data['count']++;
-            }
-        } else {
-            $data = ['count' => 1, 'start' => $now];
-        }
-
-        file_put_contents($file, json_encode($data));
-        return true;
-    }
-
-    rateLimit($_SERVER['REMOTE_ADDR'] ?? 'unknown');
-
-    // 🛡 Sanitize Input (basic filter)
-    foreach ($_GET as $k => $v) {
-        $_GET[$k] = is_string($v) ? htmlspecialchars($v, ENT_QUOTES, 'UTF-8') : $v;
-    }
-    foreach ($_POST as $k => $v) {
-        $_POST[$k] = is_string($v) ? htmlspecialchars($v, ENT_QUOTES, 'UTF-8') : $v;
-    }
-
-    // 🛡 Block suspicious headers
-    $forbiddenHeaders = ['X-Forwarded-For', 'Forwarded', 'Proxy-Authorization'];
-    foreach ($forbiddenHeaders as $h) {
-        if (isset($_SERVER['HTTP_' . strtoupper(str_replace('-', '_', $h))])) {
-            http_response_code(400);
-            exit(json_encode(['status' => 'error', 'message' => 'Suspicious request']));
-        }
-    }
-
-    // -------- ROUTE LOADING ----------
-    // Initialize router first
-    Route::init();
-
-    // Load simple routes first (if routes/api.php exists)
-    $routesFile = __DIR__ . '/routes/api.php';
-    if (file_exists($routesFile)) {
-        try {
-            // Set source for api.php routes before loading
-            Route::setSource('api.php');
-            require $routesFile;
-        } catch (\Throwable $e) {
-            http_response_code(500);
-            echo json_encode([
-                'status' => 'error',
-                'message' => 'Error loading routes file',
-                'error_detail' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine()
-            ]);
-            exit;
-        }
-    }
-
-    // Then load modular routes
-    try {
-        $moduleLoader = new ModuleLoader();
-        $moduleLoader->loadModules();
-    } catch (\Throwable $e) {
-        http_response_code(500);
-        echo json_encode([
+        exit(json_encode([
+            'execution_time' => round($executionTime * 1000, 2),
+            'execution_time_unit' => 'ms',
             'status' => 'error',
-            'message' => 'Error loading modules',
-            'error_detail' => $e->getMessage(),
-            'file' => $e->getFile(),
-            'line' => $e->getLine()
-        ]);
-        exit;
+            'message' => 'Too many requests, please slow down',
+            'retry_after' => $rateLimitCheck['reset'] - time()
+        ]));
     }
 
-    // -------- ROUTE CONFLICT CHECK ----------
-    try {
-        $router = Route::getRouter();
-        if ($router !== null) {
-            $conflictChecker = new RouteConflictChecker($router);
-            $conflicts = $conflictChecker->checkConflicts();
+    // Set rate limit headers
+    header("X-RateLimit-Limit: " . RateLimiter::getLimit('default'));
+    header("X-RateLimit-Remaining: " . $rateLimitCheck['remaining']);
+    header("X-RateLimit-Reset: " . $rateLimitCheck['reset']);
 
-            if ($conflictChecker->hasConflicts()) {
-                // Log conflicts to error log
-                error_log("ROUTE CONFLICTS DETECTED:\n" . $conflictChecker->getConflictReport());
+    // 🛡 CSRF Protection (for state-changing methods)
+    $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+    if (in_array($method, ['POST', 'PUT', 'DELETE', 'PATCH'])) {
+        CSRF::token();
+    }
 
-                // Always show conflicts when detected (api.php vs module routes)
-                http_response_code(500);
-                header('Content-Type: application/json; charset=UTF-8');
-                echo json_encode([
-                    'status' => 'error',
-                    'message' => 'Route conflicts detected between api.php and module routes',
-                    'conflicts' => $conflicts,
-                    'conflict_report' => $conflictChecker->getConflictReport(),
-                    'note' => 'Please remove duplicate routes from either api.php or the conflicting module(s)'
-                ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-                exit;
+    // 🛡 Fast Input Sanitization (optimized, no unnecessary loops)
+    // Only sanitize if data exists and is not empty
+    if (!empty($_GET)) {
+        $_GET = array_map(function ($v) {
+            return is_string($v) ? InputValidator::sanitizeString($v) : $v;
+        }, $_GET);
+    }
+
+    if (!empty($_POST)) {
+        $_POST = array_map(function ($v) {
+            if (is_string($v)) {
+                return InputValidator::sanitizeString($v);
+            } elseif (is_array($v)) {
+                return InputValidator::sanitizeArray($v);
             }
+            return $v;
+        }, $_POST);
+    }
+
+    if (!empty($_COOKIE)) {
+        $_COOKIE = array_map(function ($v) {
+            return is_string($v) ? InputValidator::sanitizeString($v) : $v;
+        }, $_COOKIE);
+    }
+
+    // 🛡 Quick suspicious header check (no loop, direct checks)
+    if (isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+        error_log("Suspicious header: X-Forwarded-For = " . $_SERVER['HTTP_X_FORWARDED_FOR']);
+    }
+    if (isset($_SERVER['HTTP_X_REAL_IP'])) {
+        error_log("Suspicious header: X-Real-Ip = " . $_SERVER['HTTP_X_REAL_IP']);
+    }
+
+    // 🛡 Validate request size (prevent DoS via large payloads)
+    $maxPostSize = (int)($_ENV['APP_MAX_POST_SIZE'] ?? 10485760); // 10MB default
+    $contentLength = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
+    if ($contentLength > $maxPostSize) {
+        http_response_code(413);
+        exit(json_encode([
+            'status' => 'error',
+            'message' => 'Request entity too large',
+            'max_size' => $maxPostSize,
+            'received_size' => $contentLength
+        ]));
+    }
+
+    // 🛡 Quick Content-Type validation (no loop, direct checks)
+    if (in_array($requestMethod, ['POST', 'PUT', 'PATCH'])) {
+        $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+        if (
+            !empty($contentType) &&
+            strpos($contentType, 'application/json') !== 0 &&
+            strpos($contentType, 'application/x-www-form-urlencoded') !== 0 &&
+            strpos($contentType, 'multipart/form-data') !== 0
+        ) {
+            error_log("Unusual Content-Type: {$contentType} from IP: " . ($_SERVER['REMOTE_ADDR'] ?? 'unknown'));
         }
-    } catch (\Throwable $e) {
-        // Log conflict check error but don't block execution
-        error_log('Route conflict check error: ' . $e->getMessage());
     }
 
     header('Content-Type: application/json; charset=UTF-8');
 
-    // Dispatch route with error handling
+    // -------- DIRECT ROUTE DISPATCH (No Loops) --------
+    // Route path already computed, go directly to route handler
+    // Router uses hash map for O(1) lookup - no loops for exact matches
     try {
-        $response = Route::dispatch();
+        // Get router instance and dispatch directly
+        $router = Route::getRouter();
+        if ($router !== null) {
+            // Direct route lookup - O(1) for exact matches, minimal overhead for dynamic
+            $routeInfo = $router->findRoute($requestMethod, $targetRoutePath);
+
+            if ($routeInfo !== null) {
+                // Execute route directly - no loops, immediate execution
+                $response = $router->executeRoute($routeInfo['route'], $routeInfo['params']);
+            } else {
+                // Route not found - return 404
+                http_response_code(404);
+                $response = [
+                    'status' => 'error',
+                    'message' => 'Route not found',
+                    'uri' => $targetRoutePath,
+                    'method' => $requestMethod
+                ];
+            }
+        } else {
+            // Fallback to standard dispatch if router not initialized
+            $response = Route::dispatch();
+        }
     } catch (\Throwable $e) {
+        $executionTime = microtime(true) - $executionStartTime;
+
         http_response_code(500);
         echo json_encode([
+            'execution_time' => round($executionTime * 1000, 2),
+            'execution_time_unit' => 'ms',
             'status' => 'error',
             'message' => 'Route execution error',
             'error_detail' => $e->getMessage(),
             'file' => $e->getFile(),
             'line' => $e->getLine(),
-            'trace' => $e->getTraceAsString()
+            'trace' => ($_ENV['APP_DEBUG'] ?? 'false') === 'true' ? $e->getTraceAsString() : null
         ]);
         exit;
     }
+
     if ($response !== null) {
+        // Calculate execution time
+        $executionTime = microtime(true) - $executionStartTime;
+
+        // Add execution time to response
+        if (is_array($response)) {
+            $response = array_merge([
+                'execution_time' => round($executionTime * 1000, 2),
+                'execution_time_unit' => 'ms'
+            ], $response);
+        } else {
+            $response = [
+                'execution_time' => round($executionTime * 1000, 2),
+                'execution_time_unit' => 'ms',
+                'status' => 'success',
+                'data' => $response
+            ];
+        }
+
         echo json_encode($response, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 } catch (\Throwable $th) {
+    $executionTime = microtime(true) - $executionStartTime;
+
     http_response_code(500);
     echo json_encode([
+        'execution_time' => round($executionTime * 1000, 2),
+        'execution_time_unit' => 'ms',
         'status' => 'error',
         'message' => 'Internal Server Error',
         'error_detail' => $th->getMessage(),
         'file' => $th->getFile(),
-        'line' => $th->getLine()
+        'line' => $th->getLine(),
+        'trace' => ($_ENV['APP_DEBUG'] ?? 'false') === 'true' ? $th->getTraceAsString() : null
     ]);
 }

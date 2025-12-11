@@ -431,6 +431,12 @@ class QueryBuilder
         }
 
         return implode(', ', array_map(function($col) {
+            // Don't wrap SQL expressions (functions, AS aliases, etc.) in backticks
+            // Check if it contains SQL functions, AS keyword, or other SQL expressions
+            if (preg_match('/\b(COUNT|SUM|AVG|MAX|MIN|CONCAT|CASE|WHEN|THEN|ELSE|END|AS|DISTINCT)\b/i', $col) 
+                || preg_match('/[()]/', $col)) {
+                return $col;
+            }
             return "`{$col}`";
         }, $this->select));
     }

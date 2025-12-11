@@ -204,26 +204,26 @@ function generateModel(string $modulePath, string $moduleName, string $tableName
     $fields = [];
     $fieldComments = [];
     
-    foreach ($columns as $column) {
-        $fieldName = $column['name'];
-        $fieldType = mapSqlTypeToPhpType($column['type']);
-        $nullable = $column['null'] === 'YES' ? 'true' : 'false';
+    // foreach ($columns as $column) {
+    //     $fieldName = $column['name'];
+    //     $fieldType = mapSqlTypeToPhpType($column['type']);
+    //     $nullable = $column['null'] === 'YES' ? 'true' : 'false';
         
-        $fields[] = "    public \${$fieldName};";
+    //     $fields[] = "    public \${$fieldName};";
         
-        $comment = "     * @var {$fieldType}";
-        if ($nullable === 'true') {
-            $comment .= "|null";
-        }
-        $comment .= " {$fieldName}";
-        if ($column['key'] === 'PRI') {
-            $comment .= " (Primary Key)";
-        }
-        if ($column['extra'] === 'auto_increment') {
-            $comment .= " (Auto Increment)";
-        }
-        $fieldComments[] = $comment;
-    }
+    //     $comment = "     * @var {$fieldType}";
+    //     if ($nullable === 'true') {
+    //         $comment .= "|null";
+    //     }
+    //     $comment .= " {$fieldName}";
+    //     if ($column['key'] === 'PRI') {
+    //         $comment .= " (Primary Key)";
+    //     }
+    //     if ($column['extra'] === 'auto_increment') {
+    //         $comment .= " (Auto Increment)";
+    //     }
+    //     $fieldComments[] = $comment;
+    // }
     
     $fieldsStr = implode("\n", $fields);
     $commentsStr = implode("\n", $fieldComments);
@@ -250,33 +250,6 @@ class Model extends BaseModel
     
     // Model fields (auto-populated from database)
 {$fieldsStr}
-    
-    /**
-     * Get table columns information
-     */
-    public static function getColumns(): array
-    {
-        return [
-PHP;
-    
-    foreach ($columns as $column) {
-        $modelContent .= "\n            '{$column['name']}' => [\n";
-        $modelContent .= "                'type' => '{$column['type']}',\n";
-        $modelContent .= "                'null' => " . ($column['null'] === 'YES' ? 'true' : 'false') . ",\n";
-        $modelContent .= "                'key' => '{$column['key']}',\n";
-        if ($column['default'] !== null) {
-            $modelContent .= "                'default' => '{$column['default']}',\n";
-        }
-        if ($column['extra']) {
-            $modelContent .= "                'extra' => '{$column['extra']}',\n";
-        }
-        $modelContent .= "            ],";
-    }
-    
-    $modelContent .= <<<PHP
-
-        ];
-    }
     
     /**
      * Get primary key column name

@@ -4,6 +4,8 @@ namespace App\Core;
 
 use App\Database\Db;
 
+use function PHPSTORM_META\type;
+
 /**
  * Base Model Class with ActiveRecord-like functionality
  * All models should extend this class
@@ -24,10 +26,10 @@ abstract class Model implements \JsonSerializable
 
     // Relationship cache
     protected static array $relationshipCache = [];
-    
+
     // Reflection cache for performance
     protected static array $reflectionCache = [];
-    
+
     // Query result cache (simple in-memory cache)
     protected static array $queryCache = [];
     protected static int $queryCacheSize = 100;
@@ -40,7 +42,7 @@ abstract class Model implements \JsonSerializable
         // We don't sync here - properties will be set lazily when accessed via __get()
         $this->unsetPublicProperties();
     }
-    
+
     /**
      * Unset all public properties so __get() is called when accessing them
      * This ensures that property access always checks the attributes array first
@@ -48,12 +50,12 @@ abstract class Model implements \JsonSerializable
     protected function unsetPublicProperties(): void
     {
         $className = static::class;
-        
+
         // Cache reflection for performance
         if (!isset(self::$reflectionCache[$className])) {
             $reflection = new \ReflectionClass($this);
             $properties = $reflection->getProperties(\ReflectionProperty::IS_PUBLIC);
-            
+
             $propertyNames = [];
             foreach ($properties as $property) {
                 $name = $property->getName();
@@ -64,7 +66,7 @@ abstract class Model implements \JsonSerializable
             }
             self::$reflectionCache[$className] = $propertyNames;
         }
-        
+
         // Unset all public properties so __get() is called
         foreach (self::$reflectionCache[$className] as $name) {
             unset($this->$name);
@@ -104,6 +106,15 @@ abstract class Model implements \JsonSerializable
     }
 
     /**
+     * Primary key column name.
+     * Child models can override this, but we default to conventional 'id'.
+     */
+    public static function getPrimaryKey(): string
+    {
+        return 'id';
+    }
+
+    /**
      * Create new instance with attributes
      * Optimized to avoid unnecessary operations
      * Properties are unset initially and will be set lazily when accessed via __get()
@@ -140,12 +151,12 @@ abstract class Model implements \JsonSerializable
     protected function syncPropertiesToAttributes(): void
     {
         $className = static::class;
-        
+
         // Use cached reflection to avoid repeated ReflectionClass instantiation
         if (!isset(self::$reflectionCache[$className])) {
             $reflection = new \ReflectionClass($this);
             $properties = $reflection->getProperties(\ReflectionProperty::IS_PUBLIC);
-            
+
             // Cache property names for this class
             $propertyNames = [];
             foreach ($properties as $property) {
@@ -157,7 +168,7 @@ abstract class Model implements \JsonSerializable
             }
             self::$reflectionCache[$className] = $propertyNames;
         }
-        
+
         // Use cached property names and check if property is initialized
         $reflection = new \ReflectionClass($this);
         foreach (self::$reflectionCache[$className] as $name) {
@@ -273,11 +284,11 @@ abstract class Model implements \JsonSerializable
     public function toArray(): array
     {
         $array = $this->attributes;
-        
+
         // Include relations if loaded
         foreach ($this->relations as $key => $value) {
             if (is_array($value)) {
-                $array[$key] = array_map(function($item) {
+                $array[$key] = array_map(function ($item) {
                     return $item instanceof Model ? $item->toArray() : $item;
                 }, $value);
             } elseif ($value instanceof Model) {
@@ -332,14 +343,46 @@ abstract class Model implements \JsonSerializable
     // ============================================
 
     /**
+     * Base query builder factory.
+     * Reuses a shared DB connection for every model class to reduce connection churn.
+     */
+    protected static function newQuery(): QueryBuilder
+    {
+        $model = new static();
+        // Reuse static DB connection for better performance
+        if (self::$staticDb === null) {
+            self::$staticDb = new Db();
+            self::$staticDb->connect();
+        }
+        $model->db = self::$staticDb;
+
+        $query = new QueryBuilder($model);
+        return $query->asModels();
+    }
+
+    /**
+     * Flexible finder modeled after Yii's ActiveRecord::find().
+     * - Without arguments returns a QueryBuilder for fluent chaining.
+     * - With an ID/condition returns a single model (findOne style) for backwards compatibility.
+     */
+    public static function find($condition = null)
+    {
+        if ($condition === null) {
+            return static::newQuery();
+        }
+
+        return static::findOne($condition);
+    }
+
+    /**
      * Get all records
      * Usage: UsersModel::all()
-     *
-     * @return ModelCollection
      */
     public static function all(): ModelCollection
     {
-        return static::where()->all();
+        /** @var ModelCollection $results */
+        $results = static::newQuery()->all();
+        return $results;
     }
 
     /**
@@ -349,24 +392,14 @@ abstract class Model implements \JsonSerializable
      */
     public static function where(?string $column = null, $operator = null, $value = null): QueryBuilder
     {
-        $model = new static();
-        // Reuse static DB connection for better performance
-        if (self::$staticDb === null) {
-            self::$staticDb = new Db();
-            self::$staticDb->connect();
-        }
-        $model->db = self::$staticDb;
-        
-        $query = new QueryBuilder($model);
-        $query->asModels();
-        
+        $query = static::newQuery();
         if ($column !== null) {
             $query->where($column, $operator, $value);
         }
-        
         return $query;
     }
-    
+
+
     /**
      * Alias for where() - allows filter() method for better readability
      * Usage: Model::filter('status', 'active')->filter('role', 'admin')->all()
@@ -377,24 +410,117 @@ abstract class Model implements \JsonSerializable
     }
 
     /**
+     * Start a query builder with WHERE IN condition
+     * Usage: Model::whereIn('id', [1, 2, 3])->all()
+     */
+    public static function whereIn(string $column, array $values): QueryBuilder
+    {
+        $query = static::newQuery();
+        return $query->whereIn($column, $values);
+    }
+
+    /**
      * Find record by ID
      * Usage: UsersModel::find(1)
      */
-    public static function find(int $id): ?self
+    /**
+     * Fast and correct: Find single record by ID or condition.
+     * - If $id is null: returns first record quickly (limit 1 in SQL)
+     * - If $id is array: expects ['column' => ..., 'operator' => ..., 'value' => ...]
+     * - Otherwise: find by primary 'id'
+     */
+    public static function findOne($condition = null): ?self
     {
-        return static::where('id', $id)->one();
+        $query = static::newQuery();
+
+        if ($condition !== null) {
+            $query = static::applyCondition($query, $condition);
+        }
+
+        return $query->limit(1)->one();
+    }
+
+    /**
+     * Fast and correct: Find all records with a specific ID value, or all if $id == 0.
+     * Returns a ModelCollection (may be empty).
+     * Usage: UsersModel::findAll(1)
+     */
+    public static function findAll($condition = null): ModelCollection
+    {
+        $query = static::newQuery();
+
+        if ($condition !== null) {
+            $query = static::applyCondition($query, $condition);
+        }
+
+        return $query->all();
     }
 
     /**
      * Find record by ID or throw exception
      */
-    public static function findOrFail(int $id): self
+    public static function findOrFail($condition): self
     {
-        $record = static::find($id);
+        $record = static::findOne($condition);
+
         if ($record === null) {
-            throw new \Exception("Record with ID {$id} not found in " . static::class);
+            if (is_array($condition)) {
+                $conditionString = json_encode($condition, JSON_UNESCAPED_UNICODE);
+            } else {
+                $conditionString = (string)$condition;
+            }
+            throw new \Exception("Record {$conditionString} not found in " . static::class);
         }
         return $record;
+    }
+
+    /**
+     * Quickly check if any record matches the condition.
+     */
+    public static function exists($condition = null): bool
+    {
+        $query = static::newQuery()->select(['COUNT(1) AS aggregate'])->limit(1);
+        $query = $condition !== null ? static::applyCondition($query, $condition) : $query;
+        $result = $query->asArrays()->one();
+        return $result ? (int)$result['aggregate'] > 0 : false;
+    }
+
+    /**
+     * Count rows for an optional condition.
+     */
+    public static function count($condition = null): int
+    {
+        $query = static::newQuery()->select(['COUNT(1) AS aggregate']);
+        $query = $condition !== null ? static::applyCondition($query, $condition) : $query;
+        $result = $query->asArrays()->one();
+        return $result ? (int)$result['aggregate'] : 0;
+    }
+
+    /**
+     * Apply a flexible condition (id / associative array / operator triplet) to the builder.
+     */
+    protected static function applyCondition(QueryBuilder $query, $condition): QueryBuilder
+    {
+        if ($condition instanceof QueryBuilder) {
+            return $condition;
+        }
+
+        if (is_array($condition)) {
+            // Support ['id' => 1, 'status' => 'active'] style arrays
+            if (isset($condition['column'], $condition['operator'], $condition['value']) && count($condition) === 3) {
+                return $query->where($condition['column'], $condition['operator'], $condition['value']);
+            }
+
+            foreach ($condition as $column => $value) {
+                $query->where($column, $value);
+            }
+
+            return $query;
+        }
+
+        // Scalar condition -> primary key lookup
+        $primaryKey = static::getPrimaryKey();
+        return $query->where($primaryKey, $condition);
     }
 
     /**
@@ -406,10 +532,10 @@ abstract class Model implements \JsonSerializable
     {
         $model = new static();
         $db = $model->getDb();
-        
+
         $fields = [];
         $values = [];
-        
+
         foreach ($attributes as $key => $value) {
             if ($key !== 'id') {
                 $fields[] = $key;
@@ -420,13 +546,13 @@ abstract class Model implements \JsonSerializable
                 }
             }
         }
-        
+
         if (empty($fields)) {
             return null;
         }
-        
+
         $sql = "INSERT INTO `{$model->table}` (`" . implode('`, `', $fields) . "`) VALUES (" . implode(', ', $values) . ")";
-        
+
         if ($db->query($sql)) {
             $id = $db->insert_id();
             // Optimize: Set attributes directly instead of querying again
@@ -437,10 +563,10 @@ abstract class Model implements \JsonSerializable
             static::clearQueryCache();
             return $model;
         }
-        
+
         return null;
     }
-    
+
     /**
      * Clear query cache for this model's table
      */
@@ -466,11 +592,11 @@ abstract class Model implements \JsonSerializable
 
         $db = $this->getDb();
         $id = $this->getAttribute('id');
-        
+
         if (!$id) {
             return false;
         }
-        
+
         $updates = [];
         foreach ($attributes as $key => $value) {
             if ($key !== 'id') {
@@ -484,13 +610,13 @@ abstract class Model implements \JsonSerializable
         }
         // Ensure all attributes are synced to properties after update
         $this->syncAttributesToProperties();
-        
+
         if (empty($updates)) {
             return false;
         }
-        
+
         $sql = "UPDATE `{$this->table}` SET " . implode(', ', $updates) . " WHERE `id` = " . (int)$id;
-        
+
         return $db->query($sql) !== false;
     }
 
@@ -501,13 +627,13 @@ abstract class Model implements \JsonSerializable
     {
         $db = $this->getDb();
         $id = $this->getAttribute('id');
-        
+
         if (!$id) {
             return false;
         }
-        
+
         $sql = "DELETE FROM `{$this->table}` WHERE `id` = " . (int)$id;
-        
+
         return $db->query($sql) !== false;
     }
 
@@ -520,9 +646,9 @@ abstract class Model implements \JsonSerializable
         // This ensures that direct property assignments (e.g., $model->username = 'value')
         // are captured in the attributes array
         $this->syncPropertiesToAttributes();
-        
+
         $id = $this->getAttribute('id');
-        
+
         if ($id) {
             return $this->update();
         } else {
@@ -611,7 +737,7 @@ abstract class Model implements \JsonSerializable
                 AND REFERENCED_TABLE_NAME IS NOT NULL";
 
         $result = $db->query($sql);
-        
+
         if ($result) {
             while ($row = $result->fetch_assoc()) {
                 $columnName = $row['COLUMN_NAME'];
@@ -620,7 +746,7 @@ abstract class Model implements \JsonSerializable
 
                 // Try to find the model class for referenced table
                 $relatedModelClass = static::findModelClass($referencedTable);
-                
+
                 if ($relatedModelClass) {
                     $relationships[] = [
                         'type' => 'belongsTo',
@@ -645,7 +771,7 @@ abstract class Model implements \JsonSerializable
                 AND REFERENCED_COLUMN_NAME IS NOT NULL";
 
         $result = $db->query($sql);
-        
+
         if ($result) {
             while ($row = $result->fetch_assoc()) {
                 $referencingTable = $row['TABLE_NAME'];
@@ -654,7 +780,7 @@ abstract class Model implements \JsonSerializable
 
                 // Try to find the model class for referencing table
                 $relatedModelClass = static::findModelClass($referencingTable);
-                
+
                 if ($relatedModelClass) {
                     $relationships[] = [
                         'type' => 'hasMany',
@@ -695,14 +821,14 @@ abstract class Model implements \JsonSerializable
         $modulesPath = dirname(__DIR__, 2) . '/modules';
         if (is_dir($modulesPath)) {
             $modules = glob($modulesPath . '/*', GLOB_ONLYDIR);
-            
+
             foreach ($modules as $modulePath) {
                 $moduleName = basename($modulePath);
                 $modelFile = $modulePath . '/Model.php';
-                
+
                 if (file_exists($modelFile)) {
                     $className = "App\\Modules\\{$moduleName}\\Model";
-                    
+
                     if (class_exists($className)) {
                         $tempModel = new $className();
                         if ($tempModel->getTable() === $tableName) {
@@ -729,7 +855,7 @@ abstract class Model implements \JsonSerializable
         foreach ($relationships as $rel) {
             $methodName = static::generateMethodName($rel['related_table'], $rel['type']);
             $relatedClass = $rel['related_class'];
-            
+
             if ($rel['type'] === 'belongsTo') {
                 $methods[] = "    public function {$methodName}()\n    {\n        return \$this->belongsTo({$relatedClass}::class, '{$rel['foreign_key']}');\n    }";
             } elseif ($rel['type'] === 'hasMany') {
@@ -749,7 +875,7 @@ abstract class Model implements \JsonSerializable
         $name = rtrim($tableName, 's'); // Remove plural
         $name = str_replace('_', '', ucwords($name, '_'));
         $name = lcfirst($name);
-        
+
         return $name;
     }
 }

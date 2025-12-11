@@ -162,8 +162,19 @@ class Db
     protected function runReadQuery(string $sql, string $command): DbResult
     {
         $tables = $this->extractTablesFromSql($sql, $command);
+        
+        // Use enhanced auto-caching if available
+        if (class_exists('\App\Core\Cache\AutoCache')) {
+            $rows = \App\Core\Cache\AutoCache::cacheQuery($sql, $tables, function() use ($sql) {
+                $stmt = $this->conn->query($sql);
+                return $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+            }, 3600);
+            
+            return new DbResult($rows);
+        }
+        
+        // Fallback to original caching
         $cacheKey = $this->buildCacheKey($sql, $tables);
-
         $cached = $this->cacheFetch($cacheKey);
         if ($cached !== null) {
             return new DbResult($cached);
@@ -312,6 +323,16 @@ class Db
             $tables = ['__global__'];
         }
 
+        // Use enhanced auto-cache invalidation if available
+        if (class_exists('\App\Core\Cache\AutoCache')) {
+            foreach ($tables as $table) {
+                if ($table !== '__global__') {
+                    \App\Core\Cache\AutoCache::invalidateTable($table);
+                }
+            }
+        }
+
+        // Original invalidation logic (for backward compatibility)
         foreach ($tables as $table) {
             $table = strtolower($table);
             $key = $this->cacheNamespace . 'table_version:' . $table;

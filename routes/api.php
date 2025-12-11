@@ -49,10 +49,19 @@ Route::get('/health', function () {
 });
 
 // Example: Simple GET route
-Route::get('/example', function () {
+Route::get('/speed', function () {
+    
+    $startNumber = 0;
+    $endNumber = 1000000;
+    $count = 0;
+    for ($i = $startNumber; $i < $endNumber; $i++) {
+        $count++;
+    }
     return [
-        'message' => 'This is a simple route example',
-        'method' => Request::getMethod(),
-        'data' => Request::getQueryParams()
+        'status' => 'success',
+        'message' => 'Speed test',
+        'start_number' => $startNumber,
+        'end_number' => $endNumber,
+        'count' => $count,
     ];
 });

@@ -12,14 +12,16 @@ A modern, lightweight PHP framework designed for rapid API development with a mo
 4. [Environment Configuration](#environment-configuration)
 5. [Two Routing Approaches](#two-routing-approaches)
 6. [Module System](#module-system)
-7. [ActiveRecord Usage](#activerecord-usage)
-8. [Palm CLI Commands](#palm-cli-commands)
-9. [Frontend Scaffolding (src/)](#frontend-scaffolding-src)
-10. [Building CRUD APIs](#building-crud-apis)
-11. [Request & Response](#request--response)
-12. [Examples & Use Cases](#examples--use-cases)
-13. [Best Practices](#best-practices)
-14. [Troubleshooting](#troubleshooting)
+7. [Internal Route Calling (Call Routes Like Functions)](#internal-route-calling-call-routes-like-functions)
+8. [ActiveRecord Usage](#activerecord-usage)
+9. [Palm CLI Commands](#palm-cli-commands)
+10. [Frontend Scaffolding (src/)](#frontend-scaffolding-src)
+11. [Google Authentication](#google-authentication)
+12. [Building CRUD APIs](#building-crud-apis)
+12. [Request & Response](#request--response)
+13. [Examples & Use Cases](#examples--use-cases)
+14. [Best Practices](#best-practices)
+15. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -27,19 +29,36 @@ A modern, lightweight PHP framework designed for rapid API development with a mo
 
 ### What is PHP Palm?
 
-PHP Palm is a PHP framework that helps you build RESTful APIs quickly and easily. It uses a **modular architecture**, which means you organize your code into self-contained modules (like building blocks).
+PHP Palm is a modern, lightweight PHP framework designed for rapid API development with a modular architecture. It combines the simplicity of PHP with powerful features like ActiveRecord ORM, middleware support, authentication, and a flexible routing system. Perfect for building RESTful APIs and full-stack web applications quickly and efficiently!
 
 ### Key Features
 
 ✅ **Dual Routing System** - Simple routes OR modular architecture (your choice!)  
-✅ **Modular Architecture** - Organize code into modules (like NestJS)  
-✅ **Auto-Generated Code** - Create modules with one command  
+✅ **Modular Architecture** - Organize code into self-contained modules (like NestJS)  
+✅ **Auto-Generated Code** - Create modules with one command using `palm make`  
 ✅ **ActiveRecord Pattern** - Easy database operations without writing SQL  
-✅ **Built-in Security** - Rate limiting, CORS, security headers  
+✅ **Built-in Authentication** - Bearer token authentication with role-based access control  
+✅ **Google OAuth** - Easy Google authentication with helper functions and automatic OAuth flow  
+✅ **Middleware System** - Flexible middleware for authentication, rate limiting, logging, and more  
+✅ **Built-in Security** - Rate limiting, CORS, security headers, SQL injection protection, XSS protection, CSP  
 ✅ **Comprehensive Error Handling** - Automatic error catching with detailed responses  
 ✅ **CLI Tools** - Generate code with `palm` commands (`palm make ...`)  
-✅ **Frontend Router** - Clean PHP Route::get()/Route::post() helpers for `/about`, `/contact`, etc.  
-✅ **Beginner Friendly** - Clear structure and documentation  
+✅ **Frontend Router** - Clean PHP Route::get()/Route::post() helpers with route groups, prefixes, and resource routes  
+✅ **Advanced Routing** - Route groups, prefixes, resource routes, and frontend middleware  
+✅ **Query Builder** - Fluent query builder with relationships and eager loading  
+✅ **Modern Web Features** - PWA support, Dark Mode, i18n, SEO tools, Analytics integration  
+✅ **Developer Experience** - 65+ helper functions, component system, form builder, API helpers  
+✅ **Performance** - Route caching, view caching, output compression, HTTP caching  
+✅ **Beginner Friendly** - Clear structure and comprehensive documentation
+
+### Why PHP Palm?
+
+- **Fast Development**: Generate complete CRUD modules in seconds
+- **Type-Safe**: Full IDE autocomplete support with proper type hints
+- **Modern PHP**: Uses PHP 7.4+ features and best practices
+- **No Boilerplate**: Auto-generated code follows framework conventions
+- **Flexible**: Use simple routes for prototypes or modules for production
+- **Production Ready**: Built-in security, error handling, and best practices  
 
 ---
 
@@ -47,10 +66,20 @@ PHP Palm is a PHP framework that helps you build RESTful APIs quickly and easily
 
 ### Prerequisites
 
-- PHP 7.4 or higher
-- Composer (PHP package manager)
-- MySQL (or any database)
-- Web server (Apache/Nginx) or PHP built-in server
+- **PHP 7.4 or higher** (PHP 8.0+ recommended for better performance)
+- **Composer** (PHP package manager) - [Download Composer](https://getcomposer.org/)
+- **MySQL 5.7+** or **MariaDB 10.2+** (or any PDO-compatible database)
+- **Web server** (Apache/Nginx) or PHP built-in server for development
+- **Git** (optional, for version control)
+
+### System Requirements
+
+- **Memory**: Minimum 128MB PHP memory limit (256MB recommended)
+- **Extensions**: 
+  - `pdo` and `pdo_mysql` (for database)
+  - `mbstring` (for string operations)
+  - `json` (for JSON handling)
+  - `openssl` (for secure connections)
 
 ### Step 1: Install Dependencies
 
@@ -61,6 +90,24 @@ composer install
 This installs all required packages including:
 - `vlucas/phpdotenv` - Environment variable management
 - `php-palm/core` - Core routing and framework components
+- `graham-campbell/result-type` - Result type handling
+- `phpoption/phpoption` - Optional value handling
+- `symfony/polyfill-*` - PHP polyfills for compatibility
+
+### Step 1.5: Verify Installation
+
+After installation, verify everything is set up correctly:
+
+```bash
+# Check PHP version
+php -v
+
+# Check Composer
+composer --version
+
+# Verify dependencies
+composer show
+```
 
 ### Step 2: Configure Environment
 
@@ -91,6 +138,30 @@ php -S localhost:8000
 ```
 
 Your API will be available at: `http://localhost:8000/api`
+
+### Step 4: Verify Installation
+
+Test that your installation is working:
+
+```bash
+# Test the API endpoint
+curl http://localhost:8000/api
+
+# Or open in browser
+# http://localhost:8000/api
+```
+
+You should see a JSON response indicating the API is running.
+
+### Step 5: Create Your First Module (Optional)
+
+Try creating your first module to test the CLI:
+
+```bash
+palm make module Product /products
+```
+
+This creates a complete CRUD module in `modules/Product/` with all necessary files.
 
 ---
 
@@ -605,72 +676,203 @@ class Model extends BaseModel
 
 ---
 
+## Internal Route Calling (Call Routes Like Functions)
+
+PHP Palm allows you to call module routes internally without HTTP requests - just like calling a function! This is perfect for server-side rendering, internal API calls, and code reuse.
+
+> 📖 **For complete documentation, see [MODULE_INTERNAL_ROUTES.md](MODULE_INTERNAL_ROUTES.md)**
+
+### Quick Start
+
+```php
+use App\Modules\Users\Module as UsersModule;
+
+// Call route internally (no HTTP request!)
+$users = UsersModule::get('/users');
+
+// Use the data
+foreach ($users as $user) {
+    echo $user['name'];
+}
+```
+
+### Available Methods
+
+All Module classes have static methods to call routes:
+
+```php
+// GET request
+$users = UsersModule::get('/users');
+$user = UsersModule::get('/users/1');
+
+// POST request (create)
+$newUser = UsersModule::post('/users', [
+    'name' => 'John',
+    'email' => 'john@example.com'
+]);
+
+// PUT request (update)
+$updated = UsersModule::put('/users/1', [
+    'name' => 'Updated Name'
+]);
+
+// DELETE request
+$deleted = UsersModule::delete('/users/1');
+
+// PATCH request
+$patched = UsersModule::patch('/users/1', ['status' => 'active']);
+```
+
+### Use in Views
+
+Perfect for server-side rendering:
+
+```php
+<?php
+use App\Modules\Product\Module as ProductModule;
+
+// Get products directly (no AJAX needed!)
+$products = ProductModule::get('/products');
+?>
+
+<div class="products">
+    <?php foreach ($products as $product): ?>
+        <div class="product">
+            <h3><?= htmlspecialchars($product['name']) ?></h3>
+            <p><?= htmlspecialchars($product['description']) ?></p>
+        </div>
+    <?php endforeach; ?>
+</div>
+```
+
+### Key Features
+
+- ✅ **No HTTP Overhead** - Direct function calls
+- ✅ **Automatic Data Extraction** - Intelligently extracts data from responses
+- ✅ **ModelCollection Support** - Converts to arrays automatically
+- ✅ **Error Handling** - Returns `null` on errors
+- ✅ **Same Route Logic** - Uses the same controllers, services, and models
+
+### Benefits
+
+1. **Server-Side Rendering** - Render data in views without AJAX
+2. **Code Reuse** - Use route logic in multiple places
+3. **Internal API Calls** - Call routes from services or other controllers
+4. **Testing** - Test route handlers without HTTP
+5. **Performance** - Faster than HTTP requests (no network overhead)
+
+### Example: Complete CRUD
+
+```php
+use App\Modules\Users\Module as UsersModule;
+
+// Create
+$user = UsersModule::post('/users', [
+    'name' => 'John Doe',
+    'email' => 'john@example.com'
+]);
+
+// Read
+$users = UsersModule::get('/users');
+$user = UsersModule::get('/users/1');
+
+// Update
+$updated = UsersModule::put('/users/1', [
+    'name' => 'John Updated'
+]);
+
+// Delete
+$deleted = UsersModule::delete('/users/1');
+```
+
+### Frontend Route Calling
+
+You can also call **frontend routes** internally to get HTML output:
+
+```php
+use Frontend\Palm\Route;
+
+// Call frontend route and get HTML
+$aboutHtml = Route::callGet('/about');
+$contactHtml = Route::callPost('/contact', ['name' => 'John']);
+
+// Use in views
+echo $aboutHtml;
+```
+
+**Frontend vs Module Routes:**
+- **Module Routes** (`UsersModule::get()`) - Returns data (arrays)
+- **Frontend Routes** (`Route::callGet()`) - Returns HTML (strings)
+
+### How It Works
+
+When you call `UsersModule::get('/users')`:
+1. Framework finds the route in the router
+2. Sets up temporary request data
+3. Executes the route handler (Controller → Service → Model)
+4. Extracts and returns the data
+5. Cleans up request state
+
+The response format is automatically handled:
+- Success responses: `['status' => 'success', 'data' => [...]]` → Returns `[...]`
+- Error responses: `['status' => 'error', ...]` → Returns `null`
+- Collections: `['items' => ModelCollection]` → Returns array
+
+---
+
 ## ActiveRecord Usage
 
-PHP Palm uses ActiveRecord pattern - you don't need to write SQL queries! The Model class handles everything.
+PHP Palm uses the **ActiveRecord pattern** - you don't need to write SQL queries! The Model class handles all database operations through intuitive PHP methods.
 
-### Basic Operations
+> 📖 **For complete ActiveRecord documentation, see [ACTIVERECORD_USAGE.md](ACTIVERECORD_USAGE.md)**
 
-#### Get All Records
+### Quick Start
+
+#### Basic CRUD Operations
 
 ```php
 use App\Modules\Product\Model;
 
-// Get all products (returns ModelCollection)
-$products = Model::all(); // ModelCollection
+// Create
+$product = Model::create([
+    'name' => 'Laptop',
+    'price' => 999.99,
+    'status' => 'active'
+]);
 
-// Iterate like an array
-foreach ($products as $product) {
-    echo $product->name;
-    echo $product->price;
-}
+// Read - Get all
+$products = Model::all(); // Returns ModelCollection
 
-// Collection helpers
-$total = $products->count();
-$first = $products->first();
-$asArray = $products->toArray();
-
-// Need lightweight stdClass objects or raw arrays?
-$objects = Model::query()->asObjects()->all(); // [ (object) ['name' => 'Laptop'], ... ]
-$arrays  = Model::query()->asArrays()->all();  // [ ['name' => 'Laptop'], ... ]
-
-// Collections also provide helpers like map(), first(), toArray()
-$names = $products->map(fn($model) => $model->name);
-```
-
-##### ModelCollection Quick Reference
-- `count()` – total results (implements `Countable`)
-- `first()` / `all()` – quick access helpers
-- `map(callable)` – transform each record while preserving collection semantics
-- Array access (`$products[0]`) and `foreach` friendly
-- Implements `JsonSerializable`, so you can return a collection directly from controllers/services
-
-#### Find by ID
-
-```php
-// Find single record
+// Read - Find by ID
 $product = Model::find(1);
 
-if ($product) {
-    echo $product->name;
-}
-
-// Find or throw exception
-$product = Model::findOrFail(1); // Throws exception if not found
-```
-
-#### Query with Conditions
-
-```php
-// Simple where
+// Read - Query with conditions
 $activeProducts = Model::where('status', 'active')->all();
 
-// Where with operator
-$expensiveProducts = Model::where('price', '>', 100)->all();
+// Update
+$product = Model::find(1);
+$product->name = 'Updated Laptop';
+$product->save();
 
-// Multiple conditions (AND)
+// Delete
+$product = Model::find(1);
+$product->delete();
+```
+
+### Query Building
+
+PHP Palm provides a fluent query builder for complex queries:
+
+```php
+// Simple queries
+$products = Model::where('status', 'active')->all();
+$products = Model::where('price', '>', 100)->all();
+
+// Multiple conditions
 $products = Model::where('status', 'active')
-    ->andWhere('price', '>', 50)
+    ->where('price', '>', 50)
+    ->orderBy('created_at', 'DESC')
+    ->limit(10)
     ->all();
 
 // OR conditions
@@ -678,214 +880,138 @@ $products = Model::where('status', 'active')
     ->orWhere('status', 'pending')
     ->all();
 
-// Array where (multiple AND)
-$products = Model::where([
-    'status' => 'active',
-    'featured' => 1
-])->all();
-
-// Filter helper (alias of where) keeps chains expressive
-$products = Model::filter(['status' => 'active'])
-    ->filter('price', '>', 50)
-    ->all();
-
-// Use a callable with filter for complex logic
-$products = Model::filter(function ($query) {
-    $query->where('status', 'active')
-        ->orWhere('status', 'pending');
-})->all();
-
 // WHERE IN
 $products = Model::whereIn('id', [1, 2, 3, 4, 5])->all();
 
-// WHERE NOT IN
-$products = Model::whereNotIn('status', ['deleted', 'archived'])->all();
-```
+// Search
+$products = Model::search('laptop', ['name', 'description'])->all();
 
-#### Ordering and Limiting
-
-```php
-// Order by
-$products = Model::where('status', 'active')
-    ->orderBy('created_at', 'DESC')
-    ->orderBy('name', 'ASC')
-    ->all();
-
-// Limit results
-$products = Model::where('status', 'active')
-    ->limit(10)
-    ->offset(20) // Skip first 20
-    ->all();
-
-// Pagination aliases (skip / take)
-$products = Model::skip(20)  // same as offset(20)
-    ->take(10)               // same as limit(10)
-    ->orderBy('created_at', 'DESC')
-    ->all();
-
-// Select specific columns
-$products = Model::select(['id', 'name', 'price'])
-    ->where('status', 'active')
-    ->all();
-```
-
-#### Count and Exists
-
-```php
-// Count records
+// Count and exists
 $count = Model::where('status', 'active')->count();
-
-// Check if exists
 $exists = Model::where('id', 1)->exists();
-
-// Search across multiple columns (LIKE %term%)
-$term = 'laptop';
-$products = Model::search($term, ['name', 'description'])->all();
 ```
 
-### Creating Records
+### Model Collections
+
+All query results return a `ModelCollection` that behaves like an array:
 
 ```php
-// Create new record
-$product = Model::create([
-    'name' => 'Laptop',
-    'price' => 999.99,
-    'description' => 'Gaming laptop',
-    'status' => 'active'
-]);
+$products = Model::all();
 
-// Returns Model instance with ID
-echo $product->id;
-```
+// Array-like access
+$first = $products[0];
+$total = $products->count();
 
-### Updating Records
+// Collection methods
+$first = $products->first();
+$array = $products->toArray();
+$names = $products->map(fn($p) => $p->name);
 
-```php
-// Method 1: Update using save()
-$product = Model::find(1);
-$product->name = 'Updated Laptop';
-$product->price = 899.99;
-$product->save();
-
-// Method 2: Update using update() method
-$product = Model::find(1);
-$product->update([
-    'name' => 'Updated Laptop',
-    'price' => 899.99
-]);
-```
-
-### Deleting Records
-
-```php
-// Delete record
-$product = Model::find(1);
-$product->delete();
-
-// Returns true on success, false on failure
+// Iterate
+foreach ($products as $product) {
+    echo $product->name;
+}
 ```
 
 ### Relationships
 
-#### Define Relationships
+Define relationships in your models:
 
 ```php
-namespace App\Modules\User;
-
-use App\Core\Model as BaseModel;
-
-class Model extends BaseModel
-{
-    protected string $table = 'users';
-
-    // User has many posts
+// In User Model
     public function posts()
     {
         return $this->hasMany(PostModel::class, 'user_id');
     }
 
-    // User has one profile
     public function profile()
     {
         return $this->hasOne(ProfileModel::class, 'user_id');
     }
 
-    // User belongs to company
     public function company()
     {
         return $this->belongsTo(CompanyModel::class, 'company_id');
-    }
 }
 ```
 
-#### Access Relationships
+Access relationships:
 
 ```php
+// Lazy loading
 $user = UserModel::find(1);
+$posts = $user->posts; // Loads when accessed
 
-// Lazy loading (loads when accessed)
-$posts = $user->posts;        // Array of PostModel
-$profile = $user->profile;    // ProfileModel or null
-$company = $user->company;     // CompanyModel or null
+// Eager loading (recommended for performance)
+$users = UserModel::with('posts')->all(); // Avoids N+1 queries
 ```
 
-#### Eager Loading (Performance Optimization)
+### Available Methods
 
-```php
-// Load users with their posts (avoids N+1 query problem)
-$users = UserModel::with('posts')->all();
+**Static Methods:**
+- `Model::all()` - Get all records
+- `Model::find($condition)` - Find by ID or condition
+- `Model::findOne($condition)` - Find single record
+- `Model::findOrFail($condition)` - Find or throw exception
+- `Model::where($column, $operator, $value)` - Start query builder
+- `Model::create($attributes)` - Create new record
+- `Model::count($condition)` - Count records
+- `Model::exists($condition)` - Check if exists
 
-// Load multiple relationships
-$users = UserModel::with(['posts', 'profile', 'company'])->all();
+**Instance Methods:**
+- `$model->save()` - Save (insert or update)
+- `$model->update($attributes)` - Update record
+- `$model->delete()` - Delete record
+- `$model->toArray()` - Convert to array
 
-// Access relationships (already loaded)
-foreach ($users as $user) {
-    echo $user->name;
-    foreach ($user->posts as $post) {
-        echo $post->title;
-    }
-}
-```
+**Query Builder Methods:**
+- `->where()`, `->orWhere()`, `->whereIn()`, `->whereNotIn()`
+- `->orderBy()`, `->limit()`, `->offset()`, `->skip()`, `->take()`
+- `->select()`, `->search()`, `->with()`
+- `->asModels()`, `->asObjects()`, `->asArrays()`
+- `->all()`, `->one()`, `->count()`, `->exists()`
 
-### Converting to Array/JSON
+### Performance Tips
 
-```php
-$product = Model::find(1);
+1. **Use Eager Loading**: Always use `with()` to avoid N+1 queries
+2. **Select Specific Columns**: Use `select()` to limit data transfer
+3. **Connection Pooling**: Framework automatically reuses connections
+4. **Query Caching**: Automatic caching with APCu when available
 
-// Convert to array (includes relationships if loaded)
-$array = $product->toArray();
+### Complete Documentation
 
-// For JSON response
-return json_encode($product->toArray());
-```
+For detailed documentation including:
+- All available methods and parameters
+- Advanced query examples
+- Relationship definitions and usage
+- Performance optimization techniques
+- Best practices and patterns
 
-### Complete Example
-
-```php
-// Get active products with price > 50, ordered by name, limit 10
-$products = Model::where('status', 'active')
-    ->where('price', '>', 50)
-    ->orderBy('name', 'ASC')
-    ->limit(10)
-    ->all();
-
-// Process products
-foreach ($products as $product) {
-    echo "Name: {$product->name}\n";
-    echo "Price: {$product->price}\n";
-    
-    // Convert to array for API response
-    $data[] = $product->toArray();
-}
-
-return $this->success($data, 'Products retrieved successfully');
-```
+See **[ACTIVERECORD_USAGE.md](ACTIVERECORD_USAGE.md)** for the complete guide.
 
 ---
 
 ## Palm CLI Commands
 
 PHP Palm includes a powerful CLI tool to generate code automatically via the `palm` command.
+
+### Quick Start (Recommended)
+
+Use the `palm.bat` launcher for better console readability on Windows:
+
+```batch
+palm.bat serve
+palm.bat make view home.about
+palm.bat help
+```
+
+**💡 Tip**: For best readability, run `palm-console-setup.bat` once to configure your console font. See [Console Setup Guide](README_CONSOLE_SETUP.md).
+
+Or use PHP directly:
+
+```bash
+php app/scripts/palm.php <command> [arguments]
+```
 
 ### Main Command
 
@@ -895,7 +1021,7 @@ palm <command> [arguments]
 
 ### Available Commands
 
-#### 0. Scaffold Frontend (SPA-ready `src/`)
+#### 0. Scaffold Frontend (`src/`)
 
 Creates or refreshes the `src/` directory that powers the Palm frontend router.
 
@@ -907,10 +1033,9 @@ palm make frontend
 
 | Path | Description |
 |------|-------------|
-| `src/main.php` | Boots the frontend router using `app/Palm/Route.php` |
-| `src/layouts/main.php` | Default layout with nav + SPA placeholders |
-| `src/views/home/{home,about,contact}.php` | Example views showing state/actions |
-| `public/palm-assets/palm-spa.js` | Lightweight runtime for SPA navigation |
+| `src/routes/main.php` | Boots the frontend router using `app/Palm/Route.php` |
+| `src/layouts/main.php` | Default layout with nav |
+| `src/views/home/{index,about,contact}.palm.php` | Example views |
 
 The command is idempotent—existing files are left untouched so you can re-run it safely after upgrading Palm.
 
@@ -1029,7 +1154,7 @@ palm make usetable all
 
 ## Frontend Scaffolding (src/)
 
-Need a landing page, layout, and SPA runtime without wiring everything manually? Run:
+Need a landing page and layout without wiring everything manually? Run:
 
 ```bash
 palm make frontend
@@ -1039,26 +1164,23 @@ This drops a ready-to-edit `src/` tree that mirrors the structure used in this r
 
 ```
 src/
-├── main.php                 # Route::get('/about', Route::view('home.about')) etc.
+├── routes/
+│   └── main.php             # Route::get('/about', Route::view('home.about')) etc.
 ├── layouts/
-│   └── main.php             # Shared shell with nav + palm-spa snippets
+│   └── main.php             # Shared shell with nav
 └── views/
     └── home/
-        ├── home.php         # Rich state/action example
-        ├── about.php        # Stateful text/content demo
-        └── contact.php      # Classic form with flash handling
-public/
-└── palm-assets/
-    └── palm-spa.js          # Lightweight SPA runtime shipped with every scaffold
+        ├── index.palm.php   # Home page
+        ├── about.palm.php   # About page
+        └── contact.palm.php # Contact form
 ```
 
-Because the scaffold points to `app/Palm/helpers.php` and `app/Palm/Route.php`, it always uses the latest runtime—you never end up with duplicate vendor code inside `src/`.
+All frontend Palm classes are autoloaded via Composer (PSR-4), so you can use `use Frontend\Palm\Route;` and other classes directly without require statements. The scaffold uses the latest runtime from `app/Palm/`—you never end up with duplicate vendor code inside `src/`.
 
 **Typical flow**
 1. Run `palm make frontend`.
-2. Map non-API requests to `src/main.php` (already done in `index.php`).
-3. Customize the views/layouts, or add new view files under `src/views/<folder>/<view>.php`.
-4. Link between pages with `<a palm-spa-link>` to keep instant navigation.
+2. Map non-API requests to `src/routes/main.php` (already done in `index.php`).
+3. Customize the views/layouts, or add new view files under `src/views/<folder>/<view>.palm.php`.
 
 Whenever Palm ships new frontend helpers, re-run `palm make frontend`; new files are added, existing files stay untouched.
 
@@ -1086,46 +1208,143 @@ Route::post('/contact', function () {
 Route::dispatch($_SERVER['REQUEST_METHOD'], $_SERVER['REQUEST_URI']);
 ```
 
-- Views live in `src/views/<folder>/<view>.php` (e.g. `home.home`).
+- Views live in `src/views/<folder>/<view>.palm.php` (e.g. `home.index`).
 - Layouts live in `src/layouts/`.
 - `Route::view($slug, $data)` returns a closure to render a view; `Route::render`
   lets you return a view from inside a POST handler.
-- Palm automatically pre-renders every registered view and ships it to the browser.
-  Add `palm-spa-link` to anchors (e.g. `<a href="/about" palm-spa-link>About</a>`)
-  and `public/palm-assets/palm-spa.js` will swap the DOM via `history.pushState` without extra
-  fetch calls.
-- POST forms submit via the SPA runtime automatically. Use
-  `<form data-spa-form="false">...</form>` if you need a classic full-page POST.
+- All views are server-rendered PHP files—no JavaScript build step required.
 
-### View State (PHP-authored)
+---
 
-Use the runtime helpers in your PHP views—no custom JS or attributes needed.
+## Google Authentication
+
+PHP Palm includes easy-to-use Google OAuth authentication with helper functions and automatic OAuth flow handling.
+
+### Quick Setup
+
+1. **Create Google OAuth Credentials**
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a project and enable Google+ API
+   - Create OAuth 2.0 Client ID credentials
+   - Set authorized redirect URI: `http://localhost:8000/auth/google/callback`
+
+2. **Configure Environment Variables**
+
+   Add to `config/.env`:
+   ```env
+   GOOGLE_CLIENT_ID=your-client-id-here
+   GOOGLE_CLIENT_SECRET=your-client-secret-here
+   GOOGLE_REDIRECT_URI=http://localhost:8000/auth/google/callback
+   ```
+
+3. **Use in Your Views**
+
+   ```php
+   <?php
+   require_once dirname(__DIR__, 2) . '/app/Palm/helpers.php';
+   
+   if (google_auth_check()): 
+       $user = google_auth_user();
+   ?>
+       <p>Welcome, <?= htmlspecialchars($user['name']) ?>!</p>
+       <img src="<?= htmlspecialchars($user['picture']) ?>" alt="Profile">
+       <a href="/auth/google/logout">Logout</a>
+   <?php else: ?>
+       <a href="/auth/google">Login with Google</a>
+   <?php endif; ?>
+   ```
+
+### Available Routes
+
+The following routes are automatically available when you scaffold the frontend:
+
+- `GET /auth/google` - Redirect to Google login
+- `GET /auth/google/callback` - Handle OAuth callback (auto-configured)
+- `GET /auth/google/logout` - Logout user
+
+### Helper Functions
 
 ```php
-<?php
-$count = State(0);
+// Check if authenticated
+google_auth_check(): bool
 
-Action('add', function () use ($count) {
-    $count->increment();
-});
+// Get user data
+google_auth_user(): ?array
+// Returns: ['id', 'email', 'name', 'picture', 'verified_email']
 
-Action('subtract', function () use ($count) {
-    $count->decrement();
-});
-?>
+// Get specific user fields
+google_auth_id(): ?string        // User ID
+google_auth_email(): ?string     // Email address
+google_auth_name(): ?string      // Full name
+google_auth_picture(): ?string   // Profile picture URL
 
-<button type="button" onclick="subtract">−</button>
-Total <?= $count ?>
-<button type="button" onclick="add">+</button>
+// Get auth URL
+google_auth_url(): string
+
+// Redirect to Google login
+google_auth_redirect(): void
+
+// Logout
+google_auth_logout(): void
 ```
 
-`State()` registers a local, component-scoped state slot. `Action()` captures a PHP
-closure that mutates your state (`set`, `increment`, `decrement`, `toggle`). Palm
-compiles those actions to JavaScript, builds a virtual DOM description for the
-component, and keeps the DOM in sync automatically. You only write PHP; Palm turns
-the markup + state into a SPA at runtime.
+### Protecting Routes
 
-Run `palm make frontend` to scaffold the layout, router, SPA runtime, and sample views under `src/`.
+```php
+use Frontend\Palm\Route;
+require_once dirname(__DIR__, 2) . '/app/Palm/helpers.php';
+
+Route::get('/dashboard', function () {
+    if (!google_auth_check()) {
+        header('Location: /auth/google?redirect=' . urlencode('/dashboard'));
+        exit;
+    }
+    
+    $user = google_auth_user();
+    Route::render('dashboard', [
+        'title' => 'Dashboard',
+        'user' => $user,
+    ]);
+});
+```
+
+### Advanced Usage
+
+**Custom Scopes:**
+```php
+use Frontend\Palm\GoogleAuth;
+
+$url = GoogleAuth::getAuthUrl([
+    'openid', 
+    'email', 
+    'profile',
+    'https://www.googleapis.com/auth/calendar'
+]);
+```
+
+**Manual Initialization:**
+```php
+use Frontend\Palm\GoogleAuth;
+
+GoogleAuth::init(
+    clientId: 'your-client-id',
+    clientSecret: 'your-client-secret',
+    redirectUri: 'http://localhost:8000/auth/google/callback'
+);
+```
+
+### Features
+
+- ✅ **Automatic OAuth Flow** - Handles the complete OAuth 2.0 flow
+- ✅ **CSRF Protection** - State parameter validation
+- ✅ **Session Management** - Secure session-based storage
+- ✅ **Token Refresh** - Automatic token renewal
+- ✅ **Easy Helpers** - Simple functions for common operations
+- ✅ **User Data** - Access to ID, email, name, picture
+
+### Documentation
+
+For detailed documentation, examples, and troubleshooting, see **[GOOGLE_AUTH_USAGE.md](GOOGLE_AUTH_USAGE.md)**.
 
 ---
 
@@ -1717,10 +1936,62 @@ $this->json(['data'], 200)            // Custom
 
 ## Additional Resources
 
-- **`ACTIVERECORD_USAGE.md`** - Detailed ActiveRecord guide
-- **`SCRIPTS_UPGRADE.md`** - Script upgrade documentation
-- **Example Modules** - Check `modules/` folder
-- **Base Classes** - Explore `app/Core/` to understand framework
+### Documentation Files
+
+- **`ACTIVERECORD_USAGE.md`** - Complete ActiveRecord ORM guide with comprehensive examples, API reference, and best practices
+- **`MODULE_INTERNAL_ROUTES.md`** - Guide to calling module routes internally without HTTP requests (like functions)
+- **`GOOGLE_AUTH_USAGE.md`** - Complete guide to Google OAuth authentication setup and usage
+- **`middlewares/README.md`** - Middleware development documentation
+- **`app/Core/Security/README.md`** - Security features and implementation guide
+
+### Code Examples
+
+- **Example Modules** - Check `modules/Users/` for a complete example
+- **Base Classes** - Explore `app/Core/` to understand framework internals
+- **Routes** - See `routes/api.php` for simple route examples
+
+### Architecture Overview
+
+```
+Request Flow:
+1. index.php (Entry Point)
+   ↓
+2. Router (Route Matching)
+   ↓
+3. Middleware (Optional - Auth, Rate Limit, etc.)
+   ↓
+4. Controller (Request Handler)
+   ↓
+5. Service (Business Logic)
+   ↓
+6. Model (Database Operations - ActiveRecord)
+   ↓
+7. Response (JSON/View)
+```
+
+### Framework Components
+
+- **Routing**: `app/Core/Route.php`, `app/Core/Router.php`
+- **Database**: `app/Database/Db.php`, `app/Core/Model.php`
+- **Authentication**: `app/Core/Auth.php`, `app/Palm/GoogleAuth.php`
+- **Middleware**: `app/Core/Middleware.php`, `app/Core/MiddlewareHelper.php`
+- **Request/Response**: `app/Core/Request.php`, `app/Core/Controller.php`
+- **Frontend**: `app/Palm/Route.php`, `app/Palm/helpers.php`
+
+### Getting Help
+
+1. **Check Documentation**: Start with this README and specialized guides
+2. **Review Examples**: Look at `modules/Users/` for a complete module example
+3. **Error Messages**: Framework provides detailed error messages with debugging info
+4. **Code Inspection**: Explore `app/Core/` to understand how things work internally
+
+### Contributing
+
+If you find bugs or want to contribute:
+1. Check existing issues
+2. Follow the code style used in the framework
+3. Write clear commit messages
+4. Test your changes thoroughly
 
 ---
 
@@ -1728,8 +1999,9 @@ $this->json(['data'], 200)            // Custom
 
 For questions or issues:
 1. Check this README first
-2. Review example modules in `modules/`
-3. Check error messages - they include helpful debugging info!
-4. Review `ACTIVERECORD_USAGE.md` for database operations
+2. Review specialized guides (ACTIVERECORD_USAGE.md, AUTH_GUIDE.md, etc.)
+3. Review example modules in `modules/`
+4. Check error messages - they include helpful debugging info!
+5. Explore `app/Core/` to understand framework internals
 "# php-palm" 
 "# php-palm" 

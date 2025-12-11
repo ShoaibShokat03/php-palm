@@ -15,35 +15,45 @@ class Route
         }
     }
 
-    public static function get(string $path, callable $handler): void
+    public static function get(string $path, callable|array $handler, ?string $name = null): void
     {
         self::init();
-        self::$router->add('GET', $path, $handler);
+        self::$router->add('GET', $path, $handler, null, $name);
     }
 
-    public static function post(string $path, callable $handler): void
+    public static function post(string $path, callable|array $handler, ?string $name = null): void
     {
         self::init();
-        self::$router->add('POST', $path, $handler);
+        self::$router->add('POST', $path, $handler, null, $name);
     }
 
-    public static function put(string $path, callable $handler): void
+    public static function put(string $path, callable|array $handler, ?string $name = null): void
     {
         self::init();
-        self::$router->add('PUT', $path, $handler);
+        self::$router->add('PUT', $path, $handler, null, $name);
     }
 
-    public static function delete(string $path, callable $handler): void
+    public static function delete(string $path, callable|array $handler, ?string $name = null): void
     {
         self::init();
-        self::$router->add('DELETE', $path, $handler);
+        self::$router->add('DELETE', $path, $handler, null, $name);
     }
 
-    public static function patch(string $path, callable $handler): void
+    public static function patch(string $path, callable|array $handler, ?string $name = null): void
     {
         self::init();
-        self::$router->add('PATCH', $path, $handler);
+        self::$router->add('PATCH', $path, $handler, null, $name);
     }
+
+    /**
+     * Generate URL from named route
+     */
+    public static function url(string $name, array $params = []): ?string
+    {
+        self::init();
+        return self::$router->url($name, $params);
+    }
+
 
     /**
      * Set the source for route registration (used for conflict detection)

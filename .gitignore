@@ -39,3 +39,18 @@ composer.lock
 *.zip
 *.tar.gz
 *.tgz
+
+# Palm hot reload files
+.palm-reload-notify
+.palm-file-watcher.php
+.palm-router.php
+.palm-websocket-server.php
+.palm-ws-port
+.palm-ws-server.log
+
+# Compiled assets
+src/assets/compiled/
+storage/cache/assets/
+
+# Documentation (local development)
+My_Docs/
