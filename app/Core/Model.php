@@ -419,6 +419,180 @@ abstract class Model implements \JsonSerializable
         return $query->whereIn($column, $values);
     }
 
+    // ============================================
+    // LINQ-STYLE AGGREGATE METHODS (Static Proxies)
+    // ============================================
+
+    /**
+     * Get the sum of a column
+     * Usage: Order::sum('amount')
+     */
+    public static function sum(string $column)
+    {
+        return static::newQuery()->sum($column);
+    }
+
+    /**
+     * Get the average of a column
+     * Usage: Employee::avg('salary')
+     */
+    public static function avg(string $column)
+    {
+        return static::newQuery()->avg($column);
+    }
+
+    /**
+     * Get the maximum value of a column
+     * Usage: Product::max('price')
+     */
+    public static function max(string $column)
+    {
+        return static::newQuery()->max($column);
+    }
+
+    /**
+     * Get the minimum value of a column
+     * Usage: Product::min('price')
+     */
+    public static function min(string $column)
+    {
+        return static::newQuery()->min($column);
+    }
+
+    // ============================================
+    // ADVANCED WHERE CONDITIONS (Static Proxies)
+    // ============================================
+
+    /**
+     * Add WHERE BETWEEN condition
+     * Usage: Product::whereBetween('price', [10, 100])->get()
+     */
+    public static function whereBetween(string $column, array $range): QueryBuilder
+    {
+        return static::newQuery()->whereBetween($column, $range);
+    }
+
+    /**
+     * Add WHERE NOT BETWEEN condition
+     * Usage: Product::whereNotBetween('price', [10, 100])->get()
+     */
+    public static function whereNotBetween(string $column, array $range): QueryBuilder
+    {
+        return static::newQuery()->whereNotBetween($column, $range);
+    }
+
+    /**
+     * Add WHERE NULL condition
+     * Usage: User::whereNull('deleted_at')->get()
+     */
+    public static function whereNull(string $column): QueryBuilder
+    {
+        return static::newQuery()->whereNull($column);
+    }
+
+    /**
+     * Add WHERE NOT NULL condition
+     * Usage: User::whereNotNull('email')->get()
+     */
+    public static function whereNotNull(string $column): QueryBuilder
+    {
+        return static::newQuery()->whereNotNull($column);
+    }
+
+    /**
+     * Add WHERE DATE condition
+     * Usage: Order::whereDate('created_at', '2024-01-15')->get()
+     */
+    public static function whereDate(string $column, string $operator, string $date = null): QueryBuilder
+    {
+        return static::newQuery()->whereDate($column, $operator, $date);
+    }
+
+    /**
+     * Add WHERE MONTH condition
+     * Usage: Order::whereMonth('created_at', 12)->get()
+     */
+    public static function whereMonth(string $column, int $month): QueryBuilder
+    {
+        return static::newQuery()->whereMonth($column, $month);
+    }
+
+    /**
+     * Add WHERE YEAR condition
+     * Usage: Order::whereYear('created_at', 2024)->get()
+     */
+    public static function whereYear(string $column, int $year): QueryBuilder
+    {
+        return static::newQuery()->whereYear($column, $year);
+    }
+
+    /**
+     * Add WHERE column comparison
+     * Usage: User::whereColumn('first_name', '=', 'last_name')->get()
+     */
+    public static function whereColumn(string $column1, string $operator, string $column2): QueryBuilder
+    {
+        return static::newQuery()->whereColumn($column1, $operator, $column2);
+    }
+
+    /**
+     * Add raw WHERE condition
+     * Usage: User::whereRaw('age > ? AND status = ?', [18, 'active'])->get()
+     */
+    public static function whereRaw(string $sql, array $bindings = []): QueryBuilder
+    {
+        return static::newQuery()->whereRaw($sql, $bindings);
+    }
+
+    // ============================================
+    // JOIN METHODS (Static Proxies)
+    // ============================================
+
+    /**
+     * Add INNER JOIN
+     * Usage: Order::join('users', 'orders.user_id', '=', 'users.id')->get()
+     */
+    public static function join(string $table, string $first, string $operator, string $second): QueryBuilder
+    {
+        return static::newQuery()->join($table, $first, $operator, $second);
+    }
+
+    /**
+     * Add LEFT JOIN
+     * Usage: Order::leftJoin('users', 'orders.user_id', '=', 'users.id')->get()
+     */
+    public static function leftJoin(string $table, string $first, string $operator, string $second): QueryBuilder
+    {
+        return static::newQuery()->leftJoin($table, $first, $operator, $second);
+    }
+
+    /**
+     * Add RIGHT JOIN
+     * Usage: Order::rightJoin('users', 'orders.user_id', '=', 'users.id')->get()
+     */
+    public static function rightJoin(string $table, string $first, string $operator, string $second): QueryBuilder
+    {
+        return static::newQuery()->rightJoin($table, $first, $operator, $second);
+    }
+
+    /**
+     * Process records in chunks
+     * Usage: User::chunk(100, function($users) { foreach($users as $user) { ... } })
+     */
+    public static function chunk(int $size, \Closure $callback): bool
+    {
+        return static::newQuery()->chunk($size, $callback);
+    }
+
+    /**
+     * Process records in chunks by ID (more efficient)
+     * Usage: User::chunkById(100, function($users) { ... })
+     */
+    public static function chunkById(int $size, \Closure $callback, string $column = 'id'): bool
+    {
+        return static::newQuery()->chunkById($size, $callback, $column);
+    }
+
     /**
      * Find record by ID
      * Usage: UsersModel::find(1)
@@ -877,5 +1051,31 @@ abstract class Model implements \JsonSerializable
         $name = lcfirst($name);
 
         return $name;
+    }
+
+    /**
+     * Validate data using Model Attributes (NestJS style)
+     * 
+     * @param array $data Data to validate
+     * @return static Populated Model instance
+     * @throws \Frontend\Palm\Validation\ValidationException
+     */
+    public static function validate(array $data): static
+    {
+        // Ensure Validator class is loaded
+        if (!class_exists('Frontend\Palm\Validation\Validator')) {
+            require_once dirname(__DIR__, 2) . '/app/Palm/Validation/Validator.php';
+        }
+
+        // Validate using the Model class itself as the DTO definition
+        // The Validator returns an object of the class type
+        /** @var static $model */
+        $model = \Frontend\Palm\Validation\Validator::validate(static::class, $data);
+
+        // Sync attributes for ActiveRecord compatibility
+        // The Validator sets properties directly, but ActiveRecord relies on $attributes array
+        $model->syncPropertiesToAttributes();
+
+        return $model;
     }
 }

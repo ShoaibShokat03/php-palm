@@ -12,7 +12,7 @@ $pageTitle = 'Home';
     <div class="demo-section">
         <h3>Getting Started</h3>
         <p>This is your PHP Palm frontend. Edit this file at <code>src/views/home/index.palm.php</code> to customize it.</p>
-        <p>Your routes are defined in <code>src/routes/main.php</code> and the layout is in <code>src/layouts/main.php</code>.</p>
+        <p>Your routes are defined in <code>src/routes/web.php</code> and the layout is in <code>src/layouts/main.php</code>.</p>
     </div>
 
     <div class="demo-section">

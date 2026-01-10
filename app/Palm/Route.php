@@ -2,6 +2,8 @@
 
 namespace Frontend\Palm;
 
+use Frontend\Palm\Page;
+
 class Route
 {
     protected static array $routes = [
@@ -22,21 +24,30 @@ class Route
     protected static array $groupStack = [];
     protected static array $middlewareStack = [];
 
+    // Performance caches - avoid repeated file operations
+    protected static array $viewPathCache = []; // Cache resolved view file paths
+    protected static array $layoutPathCache = []; // Cache resolved layout paths
+    protected static bool $helpersLoaded = false; // Track if helpers.php is loaded
+    protected static ?string $palmRoot = null; // Cache PALM_ROOT path
+
     public static function init(string $basePath): void
     {
         self::$basePath = rtrim($basePath, DIRECTORY_SEPARATOR);
-        
-        // Define PALM_ROOT constant for absolute path resolution
-        if (!defined('PALM_ROOT')) {
-            define('PALM_ROOT', realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2));
+
+        // Cache PALM_ROOT early - avoid repeated realpath() calls
+        if (self::$palmRoot === null) {
+            self::$palmRoot = realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2);
+            if (!defined('PALM_ROOT')) {
+                define('PALM_ROOT', self::$palmRoot);
+            }
         }
-        
+
         // Initialize route cache
         RouteCache::init(dirname($basePath));
-        
+
         // Initialize view cache
         ViewCache::init(dirname($basePath));
-        
+
         // Try to load cached routes
         $cachedRoutes = RouteCache::load();
         if ($cachedRoutes !== null) {
@@ -118,21 +129,21 @@ class Route
     public static function getViewData(string $path, array $data = []): ?array
     {
         $normalizedPath = self::normalizePath($path);
-        
+
         // Check if route exists and is a view route
         if (!isset(self::$routes['GET'][$normalizedPath])) {
             return null;
         }
 
         $handler = self::$routes['GET'][$normalizedPath];
-        
+
         // If handler is a ViewHandler, return its data
         if ($handler instanceof ViewHandler) {
             $viewData = $handler->getData();
             // Merge with provided data
             return array_merge($viewData, $data);
         }
-        
+
         // For other handlers, we can't easily extract data
         // Return null or try to execute and capture (not recommended)
         return null;
@@ -161,7 +172,7 @@ class Route
 
         // Normalize path
         $normalizedPath = self::normalizePath($path);
-        
+
         // Check if route exists
         if (!isset(self::$routes[$method][$normalizedPath])) {
             return null;
@@ -188,22 +199,22 @@ class Route
                     $_SERVER['QUERY_STRING'] = http_build_query($data);
                 }
             }
-            
+
             $_SERVER['REQUEST_METHOD'] = $method;
             $_SERVER['REQUEST_URI'] = $path . (!empty($data) && $method === 'GET' ? '?' . http_build_query($data) : '');
             self::$currentPath = $normalizedPath;
 
             // Capture all output (HTML, headers, etc.)
             ob_start();
-            
+
             try {
                 // Execute handler
                 // Most handlers call Route::render() which outputs HTML directly
                 $handler();
-                
+
                 // Get captured output
                 $output = ob_get_clean();
-                
+
                 // Return the HTML output
                 return $output ?: null;
             } catch (\Throwable $e) {
@@ -235,7 +246,7 @@ class Route
 
         // Build full path with prefix
         $fullPath = self::normalizePath($prefix . $path);
-        
+
         // Build full name with prefix
         $fullName = $name;
         if ($name !== null && $namePrefix !== '') {
@@ -264,7 +275,7 @@ class Route
             // Store handler directly for backwards compatibility
             self::$routes[$method][$normalized] = $handler;
         }
-        
+
         // Store route name if provided
         if ($fullName !== null) {
             self::$routeNames[$fullName] = [
@@ -286,10 +297,10 @@ class Route
     {
         // Push group attributes to stack
         self::$groupStack[] = $attributes;
-        
+
         // Execute callback (routes registered inside will use these attributes)
         $callback();
-        
+
         // Pop group attributes
         array_pop(self::$groupStack);
     }
@@ -362,7 +373,7 @@ class Route
             $middlewareInstance = self::resolveMiddleware($middlewareItem);
             if ($middlewareInstance instanceof MiddlewareInterface) {
                 $currentNext = $next;
-                $next = function() use ($middlewareInstance, $currentNext) {
+                $next = function () use ($middlewareInstance, $currentNext) {
                     return $middlewareInstance->handle($currentNext);
                 };
             }
@@ -440,7 +451,7 @@ class Route
 
             // Create handler
             if (is_string($controller) && class_exists($controller)) {
-                $handler = function() use ($controller, $methodName) {
+                $handler = function () use ($controller, $methodName) {
                     $instance = new $controller();
                     if (method_exists($instance, $methodName)) {
                         return $instance->$methodName();
@@ -457,7 +468,7 @@ class Route
                 self::post($routePath, $handler, $routeName);
             } else {
                 // For PUT, DELETE, etc., register as POST with method override
-                self::post($routePath, function() use ($handler, $method) {
+                self::post($routePath, function () use ($handler, $method) {
                     $_SERVER['REQUEST_METHOD'] = $method;
                     return $handler();
                 }, $routeName);
@@ -524,36 +535,36 @@ class Route
     {
         $suggestions = [];
         $pathParts = explode('/', trim($path, '/'));
-        
+
         // Get all routes for the method
         $routes = self::$routes[$method] ?? [];
-        
+
         foreach ($routes as $routePath => $handler) {
             $routeParts = explode('/', trim($routePath, '/'));
-            
+
             // Calculate similarity (simple Levenshtein-like)
             $similarity = 0;
-            
+
             // Check if route starts with same path
             if (count($routeParts) > 0 && count($pathParts) > 0) {
                 if ($routeParts[0] === $pathParts[0]) {
                     $similarity += 3;
                 }
             }
-            
+
             // Check path length similarity
             $lengthDiff = abs(count($routeParts) - count($pathParts));
             if ($lengthDiff <= 1) {
                 $similarity += 2;
             }
-            
+
             // Check if any parts match
             foreach ($pathParts as $part) {
                 if (in_array($part, $routeParts)) {
                     $similarity += 1;
                 }
             }
-            
+
             if ($similarity > 0) {
                 $suggestions[] = [
                     'path' => $routePath,
@@ -561,14 +572,18 @@ class Route
                 ];
             }
         }
-        
+
         // Sort by similarity (highest first)
         usort($suggestions, fn($a, $b) => $b['similarity'] <=> $a['similarity']);
-        
+
         // Return top 5 suggestions
         return array_slice($suggestions, 0, 5);
     }
 
+    /**
+     * Fast route dispatch with O(1) exact match lookup
+     * Uses direct array access - no loops for exact matches
+     */
     public static function dispatch(string $method, string $uri): void
     {
         // SPA request handling removed
@@ -584,14 +599,29 @@ class Route
             $_GET = array_merge($_GET ?? [], $queryParams);
         }
 
+        // Fast O(1) exact route lookup using array indexing
+        // No loops - direct hash map access for maximum speed
+        $method = strtoupper($method);
+        if (!isset(self::$routes[$method])) {
+            http_response_code(404);
+            self::render('home.home', [
+                'title' => '404 - Page Not Found',
+                'message' => 'No route defined for ' . htmlspecialchars($path),
+                'suggested_routes' => [],
+                'all_routes' => self::$routes,
+            ]);
+            return;
+        }
+
+        // Direct array access - O(1) lookup, no iteration
         $route = self::$routes[$method][$path] ?? null;
 
         if ($route === null) {
             http_response_code(404);
-            
-            // Find similar routes for suggestion
+
+            // Find similar routes for suggestion (only called on 404)
             $suggestions = self::findSimilarRoutes($path, $method);
-            
+
             self::render('home.home', [
                 'title' => '404 - Page Not Found',
                 'message' => 'No route defined for ' . htmlspecialchars($path),
@@ -601,24 +631,42 @@ class Route
             return;
         }
 
+        // Execute route handler - fast path, no loops
         // Handle both old format (direct handler) and new format (array with handler/middleware)
         if (is_array($route) && isset($route['handler'])) {
             $handler = $route['handler'];
             $middleware = $route['middleware'] ?? [];
             // Execute middleware stack
             $finalHandler = self::executeMiddlewareStack($middleware, $handler);
-            $finalHandler();
+            $result = $finalHandler();
         } else {
             // Old format - direct handler
-            $route();
+            $result = $route();
+        }
+
+        // Auto-invoke ViewHandler if returned (enables both Route::view() and Route::render())
+        if ($result instanceof ViewHandler) {
+            $result();
         }
     }
 
     public static function view(string $slug, array $data = [], ?string $layout = null): ViewHandler
     {
-        return new ViewHandler($slug, $data, $layout);
+        try {
+            return new ViewHandler($slug, $data, $layout);
+        } catch (\Exception $e) {
+            echo "View not found: " . $slug;
+            die;
+        }
     }
 
+    /**
+     * Fast view rendering with optimized caching
+     * - Caches view file paths to avoid repeated file_exists() calls
+     * - Loads helpers.php only once per request
+     * - Caches layout paths
+     * - Uses ViewCache for compiled view output (production)
+     */
     public static function render(string $slug, array $data = [], ?string $layout = null): void
     {
         $layoutIdentifier = $layout ?? ($data['layout'] ?? null);
@@ -629,69 +677,235 @@ class Route
         self::$pathToSlug[self::$currentPath] = $slug;
         self::$viewRegistry[$slug] = $data + (self::$viewRegistry[$slug] ?? []);
 
-        $base = self::$basePath;
-        
-        // Try .palm.php first, then .php
-        $viewBasePath = $base . '/views/' . str_replace('.', '/', $slug);
-        $viewPath = null;
-        $isPalmFile = false;
-        
-        $palmPath = $viewBasePath . '.palm.php';
-        $phpPath = $viewBasePath . '.php';
-        
-        if (file_exists($palmPath)) {
-            $viewPath = $palmPath;
-            $isPalmFile = true;
-        } elseif (file_exists($phpPath)) {
-            $viewPath = $phpPath;
-            $isPalmFile = false;
-        }
-        
-        if ($viewPath === null || !file_exists($viewPath)) {
+        // Fast path: Get cached view path or resolve once
+        $viewPath = self::getViewPath($slug);
+        if ($viewPath === null) {
             http_response_code(404);
             echo "<h1>View not found</h1><p>" . htmlspecialchars($slug) . "</p>";
             return;
         }
 
-        // Render the view file - no compilation, just require directly
-            // Ensure PALM_ROOT is defined
-            if (!defined('PALM_ROOT')) {
-                define('PALM_ROOT', realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2));
-            }
-            // Load helpers.php before including view
-            require_once PALM_ROOT . '/app/Palm/helpers.php';
+        // Load helpers.php only once per request
+        self::ensureHelpersLoaded();
+
+        // Check ViewCache for compiled output (production only)
+        $cachedView = ViewCache::get($viewPath);
+        if ($cachedView !== null) {
+            // Use cached compiled view
             extract($data);
+            require $cachedView;
+            return;
+        }
+
+        // Auto-initialize Page meta with defaults before rendering view
+        // This allows route handlers to override meta tags before the layout is rendered
+        Page::init([
+            'title' => $data['title'] ?? self::humanizeSlug($slug),
+            'description' => $data['meta']['description'] ?? 'Modern PHP Framework',
+            'ogSiteName' => 'PHP Palm',
+            'themeColor' => '#10b981'
+        ]);
+
+        // Render view content
+        extract($data);
         ob_start();
-            require $viewPath;
+        require $viewPath;
         $content = ob_get_clean();
+
+        // Ensure Page::meta is initialized before accessing
+        if (!isset(Page::$meta)) {
+            Page::init();
+        }
+
+        // Generate meta tags HTML for auto-injection into layout
+        $metaTags = Page::$meta->render();
+
         $currentComponent = null;
         $currentScripts = [];
         $title = $data['title'] ?? self::humanizeSlug($slug);
         $meta = $data['meta'] ?? [];
         $currentPath = self::$currentPath;
         $currentSlug = $slug;
-        // SPA views preloading removed - no longer needed
         $clientViews = [];
         $routeMap = [];
 
-        // No compilation - components work directly from .palm.php files
+        // Get cached layout path
+        $layoutPath = self::getLayoutPath($layoutIdentifier);
 
-        extract($data);
+        // Generate ETag for view caching (production)
+        $env = $_ENV['APP_ENV'] ?? $_SERVER['APP_ENV'] ?? 'production';
+        if (strtolower($env) !== 'development' && strtolower($env) !== 'dev') {
+            $viewEtag = md5($slug . serialize($data) . filemtime($viewPath) . filemtime($layoutPath));
+            require_once __DIR__ . '/ResponseOptimizer.php';
+            ResponseOptimizer::etag($viewEtag);
 
-        $initialScripts = $currentScripts;
-        $layoutPath = self::resolveLayoutPath($layoutIdentifier);
-        
-        // No compilation - just require layout directly
-        // Ensure PALM_ROOT is defined
-        if (!defined('PALM_ROOT')) {
-            define('PALM_ROOT', realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2));
+            // Set cache headers for HTML pages (short cache for dynamic content)
+            ResponseOptimizer::cache(300, true); // 5 minutes cache
         }
-        // Load helpers.php before including layout
-        require_once PALM_ROOT . '/app/Palm/helpers.php';
+
+        // Setup progressive loading optimizations
+        self::setupProgressiveLoading($slug, $data);
+
+        // Send resource hints early (HTTP/2 Server Push or Link headers)
+        // This allows browser to start downloading CSS/Fonts while PHP is still rendering
+        if (!headers_sent() && strtolower($env) !== 'development') {
+            $hints = Page::$meta->renderLinkHeaders();
+            if ($hints) {
+                header('Link: ' . $hints, false);
+            }
+        }
+
+        // Render layout with view content
         require $layoutPath;
 
         // Automatically inject scripts after layout is included
         self::outputLayoutScripts($clientViews, $currentSlug, $routeMap);
+    }
+
+    /**
+     * Setup progressive loading optimizations for fast delivery
+     */
+    protected static function setupProgressiveLoading(string $slug, array $data = []): void
+    {
+        require_once __DIR__ . '/ProgressiveResourceLoader.php';
+        ProgressiveResourceLoader::init();
+
+        // Preload likely next pages (navigation links)
+        $likelyPages = self::getLikelyNextPages($slug);
+        if (!empty($likelyPages)) {
+            ProgressiveResourceLoader::preloadNextPages($likelyPages);
+        }
+
+        // Preload critical assets if specified in route data
+        if (isset($data['preload'])) {
+            foreach ((array)$data['preload'] as $asset) {
+                ProgressiveResourceLoader::preload($asset['url'], $asset['as'] ?? 'script');
+            }
+        }
+
+        // DNS prefetch for external domains (if any)
+        $baseUrl = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        ProgressiveResourceLoader::dnsPrefetch('//' . $baseUrl);
+
+        // Preconnect to same origin for faster requests
+        $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        ProgressiveResourceLoader::preconnect($protocol . '://' . $baseUrl);
+    }
+
+    /**
+     * Get likely next pages based on current route
+     */
+    protected static function getLikelyNextPages(string $currentSlug): array
+    {
+        $pages = [];
+
+        // Get all registered routes
+        $allRoutes = self::$routes['GET'] ?? [];
+
+        // Common navigation patterns
+        $commonPages = ['/', '/about', '/contact', '/demo'];
+
+        foreach ($commonPages as $page) {
+            $pageSlug = self::$pathToSlug[$page] ?? null;
+            if ($pageSlug && $pageSlug !== $currentSlug) {
+                $pages[] = $page;
+            }
+        }
+
+        // Limit to 3 most likely pages
+        return array_slice($pages, 0, 3);
+    }
+
+    /**
+     * Get view file path with caching - avoids repeated file_exists() calls
+     */
+    protected static function getViewPath(string $slug): ?string
+    {
+        // Check cache first
+        if (isset(self::$viewPathCache[$slug])) {
+            $cachedPath = self::$viewPathCache[$slug];
+            // Verify file still exists (in case of file deletion)
+            if (file_exists($cachedPath)) {
+                return $cachedPath;
+            }
+            // Cache invalid, remove it
+            unset(self::$viewPathCache[$slug]);
+        }
+
+        // Resolve view path once
+        $base = self::$basePath;
+        $viewBasePath = $base . '/views/' . str_replace('.', '/', $slug);
+
+        // Single optimized check: try .palm.php first (most common), then .php
+        $palmPath = $viewBasePath . '.palm.php';
+        if (file_exists($palmPath)) {
+            self::$viewPathCache[$slug] = $palmPath;
+            return $palmPath;
+        }
+
+        $phpPath = $viewBasePath . '.php';
+        if (file_exists($phpPath)) {
+            self::$viewPathCache[$slug] = $phpPath;
+            return $phpPath;
+        }
+
+        // View not found
+        return null;
+    }
+
+    /**
+     * Get layout path with caching - avoids repeated file_exists() calls
+     */
+    protected static function getLayoutPath(?string $layoutIdentifier): string
+    {
+        $cacheKey = $layoutIdentifier ?? 'default';
+
+        // Check cache first
+        if (isset(self::$layoutPathCache[$cacheKey])) {
+            $cachedPath = self::$layoutPathCache[$cacheKey];
+            if (file_exists($cachedPath)) {
+                return $cachedPath;
+            }
+            // Cache invalid
+            unset(self::$layoutPathCache[$cacheKey]);
+        }
+
+        // Resolve layout path once
+        $layoutPath = self::resolveLayoutPath($layoutIdentifier);
+        self::$layoutPathCache[$cacheKey] = $layoutPath;
+
+        return $layoutPath;
+    }
+
+    /**
+     * Ensure helpers.php is loaded only once per request
+     */
+    protected static function ensureHelpersLoaded(): void
+    {
+        if (self::$helpersLoaded) {
+            return;
+        }
+
+        // Ensure PALM_ROOT is defined (cached)
+        if (self::$palmRoot === null) {
+            self::$palmRoot = realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2);
+            if (!defined('PALM_ROOT')) {
+                define('PALM_ROOT', self::$palmRoot);
+            }
+        }
+
+        // Load helpers.php once
+        require_once self::$palmRoot . '/app/Palm/helpers.php';
+        self::$helpersLoaded = true;
+    }
+
+    /**
+     * Clear view and layout path caches (useful for development)
+     */
+    public static function clearPathCaches(): void
+    {
+        self::$viewPathCache = [];
+        self::$layoutPathCache = [];
     }
 
     public static function currentPath(): string
@@ -702,12 +916,12 @@ class Route
     protected static function exportClientViews(string $currentSlug, array $currentData, ?string $currentHtml = null, ?array $currentComponent = null, array $currentScripts = []): array
     {
         $views = [];
-        
+
         // Use current view data if available (already rendered)
         if ($currentSlug && $currentHtml !== null) {
             $views[$currentSlug] = self::buildPayloadFromHtml($currentSlug, $currentData, $currentHtml, $currentComponent, $currentScripts);
         }
-        
+
         // Preload other views for SPA navigation (lazy - only render on demand)
         // For now, we'll only preload views that are already in the registry
         // This can be optimized further with lazy loading
@@ -735,10 +949,10 @@ class Route
                 ];
             }
         }
-        
+
         return $views;
     }
-    
+
     /**
      * Build route map with query parameter support
      */
@@ -792,20 +1006,14 @@ class Route
         return $attrs;
     }
 
+    /**
+     * Render view fragment for payload - optimized with cached paths
+     */
     protected static function renderFragmentPayload(string $slug, array $data): array
     {
-        $base = self::$basePath;
-        $viewBasePath = $base . '/views/' . str_replace('.', '/', $slug);
-        
-        // Check for .palm.php file first, then .php
-        $viewPath = $viewBasePath . '.palm.php';
-        $isPalmFile = file_exists($viewPath);
-        
-        if (!$isPalmFile) {
-            $viewPath = $viewBasePath . '.php';
-        }
-
-        if (!file_exists($viewPath)) {
+        // Use optimized cached view path lookup
+        $viewPath = self::getViewPath($slug);
+        if ($viewPath === null) {
             return [
                 'title' => self::humanizeSlug($slug),
                 'meta' => [],
@@ -818,18 +1026,14 @@ class Route
 
         $title = $data['title'] ?? self::humanizeSlug($slug);
         $meta = $data['meta'] ?? [];
-        
+
         try {
-            // No compilation - just require view directly
-                // Ensure PALM_ROOT is defined
-                if (!defined('PALM_ROOT')) {
-                    define('PALM_ROOT', realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2));
-                }
-                // Load helpers.php before including view
-                require_once PALM_ROOT . '/app/Palm/helpers.php';
-                extract($data);
+            // Load helpers once (if not already loaded)
+            self::ensureHelpersLoaded();
+            extract($data);
+
             ob_start();
-                require $viewPath;
+            require $viewPath;
             $html = ob_get_clean();
 
             return [
@@ -868,7 +1072,7 @@ class Route
 
         return $path;
     }
-    
+
     /**
      * Get full path with query string for SPA navigation
      */
@@ -888,44 +1092,45 @@ class Route
         return implode(' · ', $parts);
     }
 
+    /**
+     * Resolve layout path - optimized with single file_exists check per path
+     */
     protected static function resolveLayoutPath(?string $layoutIdentifier): string
     {
         $base = self::$basePath . '/layouts';
-        
-        // Try .palm.php first, then .php
+
+        // Resolve fallback layout once (cached in getLayoutPath)
         $fallbackPalm = $base . '/main.palm.php';
         $fallbackPhp = $base . '/main.php';
         $fallback = file_exists($fallbackPalm) ? $fallbackPalm : $fallbackPhp;
 
-        if ($layoutIdentifier === null) {
+        if ($layoutIdentifier === null || trim($layoutIdentifier) === '') {
             return $fallback;
         }
 
         $normalized = trim($layoutIdentifier);
-        if ($normalized === '') {
-            return $fallback;
-        }
 
+        // Remove common prefixes
         if (str_starts_with($normalized, 'layout.')) {
             $normalized = substr($normalized, 7);
         } elseif (str_starts_with($normalized, 'layouts.')) {
             $normalized = substr($normalized, 8);
         }
 
+        // Sanitize path
         $normalized = str_replace('\\', '/', $normalized);
         $normalized = str_replace('..', '', $normalized);
         $normalized = trim($normalized, '/');
 
         $path = $base . '/' . str_replace('.', '/', $normalized);
-        
-        // Try .palm.php first, then .php
+
+        // Optimized: single check for .palm.php first (most common), then .php
         $palmPath = $path . '.palm.php';
-        $phpPath = $path . '.php';
-        
         if (file_exists($palmPath)) {
             return $palmPath;
         }
-        
+
+        $phpPath = $path . '.php';
         if (file_exists($phpPath)) {
             return $phpPath;
         }
@@ -942,11 +1147,11 @@ class Route
             ? $clientViews[$currentViewKey]['component']
             : null;
         $bootComponents = $bootComponent ? [$bootComponent] : [];
-        
+
         // Output all scripts directly from core (no frontend includes)
         self::outputScripts($clientViews, $currentSlug, $routeMap, $bootComponent, $bootComponents);
     }
-    
+
     protected static function outputScripts(array $clientViews, ?string $currentSlug, array $routeMap, ?array $bootComponent, array $bootComponents): void
     {
         $currentViewKey = $currentSlug ?? null;
@@ -987,8 +1192,7 @@ class ViewHandler
         protected string $slug,
         protected array $data = [],
         protected ?string $layout = null
-    ) {
-    }
+    ) {}
 
     public function __invoke(): void
     {
@@ -1028,4 +1232,3 @@ class ViewHandler
         );
     }
 }
-

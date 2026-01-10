@@ -1,7 +1,10 @@
 <?php
 
+use App\Modules\Users\Module as UserModule;
 use Frontend\Palm\Route;
 use Frontend\Palm\PalmCache;
+use PhpPalm\Core\Request;
+use Frontend\Palm\Page;
 
 Route::get('/cache', function () {
     $cache = new PalmCache();
@@ -59,20 +62,68 @@ Route::get('/', Route::view('home.index', [
 ]), 'home');
 
 // About page
-Route::get('/about', Route::view('home.about', [
-    'title' => 'About PHP Palm',
-    'meta' => ['description' => 'Learn how PHP Palm powers fast, clean PHP frontends'],
-]), 'about');
+Route::get('/about', function () {
+    // Both syntaxes work! Just ensure Page::meta is initialized first
+    // The fluent API automatically initializes if needed:
+    Page::title('About PHP Palm - Modern Framework');
+    Page::description('Learn about PHP Palm, a modern, fast, and elegant PHP framework for building web applications.');
+    Page::keywords(['php framework', 'palm', 'web development', 'modern php']);
+    Page::ogImage('/assets/images/palm-og.jpg');
 
+    // Or use direct property access (auto-initializes via ensureInitialized):
+    // Page::$meta->title = 'About PHP Palm - Modern Framework';
+    // Page::$meta->description = 'Learn about PHP Palm...';
+
+    Route::render('home.about', [
+        'title' => 'About',
+    ]);
+}, 'about');
+
+// Users list page
+Route::get('/users', function () {
+
+    $users = UserModule::get("users");
+
+    Route::render('home.users', [
+        'title' => 'Users',
+        'users' => $users,
+    ]);
+}, 'users');
+
+
+// Demo page
+Route::get('/demo', function () {
+    // Fluent API example with Open Graph
+    Page::title('Demo - PHP Palm')
+        ->description('Explore PHP Palm framework features and capabilities')
+        ->keywords(['demo', 'php palm', 'features'])
+        ->ogImage('/assets/images/demo-screenshot.jpg');
+
+    // Both methods work! Route::view() returns ViewHandler which is auto-invoked
+    // You can use either:
+    return Route::view('home.demo', [
+        'title' => 'Demo Page',
+    ]);
+
+    // Or just call Route::render() directly (no return needed):
+    // Route::render('home.demo', ['title' => 'Demo Page']);
+}, 'demo');
 // Contact page
-Route::get('/contact', Route::view('home.contact', [
-    'title' => 'Contact',
-]), 'contact');
+Route::get('/contact', function () {
+    // Set SEO meta tags
+    Page::title('Contact Us - PHP Palm')
+        ->description('Get in touch with the PHP Palm team. We\'re here to help!')
+        ->keywords(['contact', 'support', 'php palm', 'help']);
+
+    Route::render('home.contact', [
+        'title' => 'Contact',
+    ]);
+}, 'contact');
 
 // Contact form submission
 Route::post('/contact', function () {
     require_once dirname(__DIR__, 2) . '/app/Palm/helpers.php';
-    
+
     $name = trim($_POST['name'] ?? '');
     $message = trim($_POST['message'] ?? '');
 
@@ -92,11 +143,6 @@ Route::post('/contact', function () {
     ]);
 }, 'contact.submit');
 
-// Demo page
-Route::get('/demo', Route::view('home.demo', [
-    'title' => 'Demo Page',
-    'message' => 'Playground for Palm experiments',
-]), 'demo');
 
 // Google Auth routes (automatically initialized in index.php)
 // Google login - redirect to Google
@@ -115,7 +161,7 @@ Route::get('/auth/google', function () {
 Route::get('/auth/google/callback', function () {
     try {
         $user = \Frontend\Palm\GoogleAuth::handleCallback();
-        
+
         // Redirect to dashboard or home
         $redirect = $_GET['redirect'] ?? '/';
         header('Location: ' . $redirect);

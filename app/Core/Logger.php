@@ -2,138 +2,366 @@
 
 namespace App\Core;
 
+use DateTime;
+use Exception;
+
 /**
- * Centralized Logger
- * 
- * Features:
- * - Multiple log levels (debug, info, warn, error)
- * - Log rotation
- * - Performance profiling
- * - Request logging
+ * Enhanced File-Based Logger with Daily Rotation
+ * PSR-3 compliant logging with multiple levels and file storage
  */
 class Logger
 {
-    protected static Logger $instance;
-    protected string $logDir;
-    protected string $level;
-    protected array $levels = ['debug', 'info', 'warn', 'error'];
-    protected int $maxFileSize = 10485760; // 10MB
-    protected int $maxFiles = 5;
+    // Log levels (PSR-3 compliant)
+    const DEBUG = 'DEBUG';
+    const INFO = 'INFO';
+    const NOTICE = 'NOTICE';
+    const WARNING = 'WARNING';
+    const ERROR = 'ERROR';
+    const CRITICAL = 'CRITICAL';
+    const ALERT = 'ALERT';
+    const EMERGENCY = 'EMERGENCY';
 
-    public function __construct(string $logDir = null, string $level = 'info')
+    protected string $logPath;
+    protected string $logLevel;
+    protected int $maxFiles;
+    protected int $maxFileSize;
+
+    private static ?Logger $instance = null;
+
+    public function __construct()
     {
-        $this->logDir = $logDir ?? (__DIR__ . '/../../storage/logs');
-        $this->level = strtolower($level);
-        
-        if (!is_dir($this->logDir)) {
-            mkdir($this->logDir, 0755, true);
-        }
+        $this->logPath = $this->getBasePath() . '/storage/logs';
+        $this->logLevel = $_ENV['LOG_LEVEL'] ?? 'DEBUG';
+        $this->maxFiles = (int)($_ENV['LOG_MAX_FILES'] ?? 30); // Keep 30 days by default
+        $this->maxFileSize = (int)($_ENV['LOG_MAX_SIZE'] ?? 10485760); // 10MB default
+
+        $this->ensureLogDirectoryExists();
     }
 
-    public static function getInstance(): Logger
+    /**
+     * Get singleton instance
+     */
+    public static function getInstance(): self
     {
-        if (!isset(self::$instance)) {
-            $logDir = $_ENV['LOG_DIR'] ?? null;
-            $level = $_ENV['LOG_LEVEL'] ?? 'info';
-            self::$instance = new self($logDir, $level);
+        if (self::$instance === null) {
+            self::$instance = new self();
         }
         return self::$instance;
     }
 
     /**
-     * Log message
+     * Get base path of application
+     */
+    protected function getBasePath(): string
+    {
+        return dirname(dirname(__DIR__));
+    }
+
+    /**
+     * Ensure log directory exists
+     */
+    protected function ensureLogDirectoryExists(): void
+    {
+        if (!is_dir($this->logPath)) {
+            mkdir($this->logPath, 0755, true);
+        }
+    }
+
+    /**
+     * Get log filename for today
+     */
+    protected function getLogFilename(): string
+    {
+        $date = date('Y-m-d');
+        return "{$this->logPath}/{$date}.log";
+    }
+
+    /**
+     * Check if log level should be logged
+     */
+    protected function shouldLog(string $level): bool
+    {
+        $levels = [
+            'DEBUG' => 0,
+            'INFO' => 1,
+            'NOTICE' => 2,
+            'WARNING' => 3,
+            'ERROR' => 4,
+            'CRITICAL' => 5,
+            'ALERT' => 6,
+            'EMERGENCY' => 7,
+        ];
+
+        $currentLevel = $levels[$this->logLevel] ?? 0;
+        $messageLevel = $levels[$level] ?? 0;
+
+        return $messageLevel >= $currentLevel;
+    }
+
+    /**
+     * Write log entry to file
+     */
+    protected function write(string $level, string $message, array $context = []): void
+    {
+        if (!$this->shouldLog($level)) {
+            return;
+        }
+
+        $filename = $this->getLogFilename();
+        $timestamp = date('Y-m-d H:i:s');
+
+        // Format the message
+        $logEntry = $this->formatLogEntry($timestamp, $level, $message, $context);
+
+        // Write to file
+        try {
+            file_put_contents($filename, $logEntry . PHP_EOL, FILE_APPEND | LOCK_EX);
+
+            // Check file size and rotate if needed
+            $this->checkFileSize($filename);
+
+            // Clean old log files
+            $this->cleanOldLogs();
+        } catch (Exception $e) {
+            // Silently fail - don't break app if logging fails
+            error_log("Logger failed: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Format log entry
+     */
+    protected function formatLogEntry(string $timestamp, string $level, string $message, array $context): string
+    {
+        $logEntry = "[{$timestamp}] {$level}: {$message}";
+
+        // Add context if provided
+        if (!empty($context)) {
+            $contextStr = json_encode($context, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $logEntry .= " | Context: {$contextStr}";
+        }
+
+        // Add request info if available
+        if (isset($_SERVER['REQUEST_URI'])) {
+            $method = $_SERVER['REQUEST_METHOD'] ?? 'CLI';
+            $uri = $_SERVER['REQUEST_URI'] ?? 'N/A';
+            $logEntry .= " | Request: {$method} {$uri}";
+        }
+
+        return $logEntry;
+    }
+
+    /**
+     * Check file size and rotate if too large
+     */
+    protected function checkFileSize(string $filename): void
+    {
+        if (file_exists($filename) && filesize($filename) > $this->maxFileSize) {
+            $newFilename = $filename . '.' . time() . '.old';
+            rename($filename, $newFilename);
+        }
+    }
+
+    /**
+     * Clean old log files (keep only last N days)
+     */
+    protected function cleanOldLogs(): void
+    {
+        $files = glob($this->logPath . '/*.log');
+        if (count($files) > $this->maxFiles) {
+            // Sort files by modification time
+            usort($files, function ($a, $b) {
+                return filemtime($a) - filemtime($b);
+            });
+
+            // Delete oldest files
+            $filesToDelete = array_slice($files, 0, count($files) - $this->maxFiles);
+            foreach ($filesToDelete as $file) {
+                @unlink($file);
+            }
+        }
+    }
+
+    /**
+     * Clear all log files
+     */
+    public function clearLogs(): int
+    {
+        $files = glob($this->logPath . '/*.log*');
+        $count = 0;
+
+        foreach ($files as $file) {
+            if (is_file($file)) {
+                @unlink($file);
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    /**
+     * Get recent log entries
+     */
+    public function getRecentLogs(int $lines = 100): array
+    {
+        $filename = $this->getLogFilename();
+
+        if (!file_exists($filename)) {
+            return [];
+        }
+
+        $file = new \SplFileObject($filename);
+        $file->seek(PHP_INT_MAX);
+        $totalLines = $file->key();
+
+        $startLine = max(0, $totalLines - $lines);
+
+        $logs = [];
+        $file->seek($startLine);
+        while (!$file->eof()) {
+            $line = trim($file->current());
+            if ($line) {
+                $logs[] = $line;
+            }
+            $file->next();
+        }
+
+        return $logs;
+    }
+
+    // PSR-3 compliant logging methods
+
+    public function emergency(string $message, array $context = []): void
+    {
+        $this->write(self::EMERGENCY, $message, $context);
+    }
+
+    public function alert(string $message, array $context = []): void
+    {
+        $this->write(self::ALERT, $message, $context);
+    }
+
+    public function critical(string $message, array $context = []): void
+    {
+        $this->write(self::CRITICAL, $message, $context);
+    }
+
+    public function error(string $message, array $context = []): void
+    {
+        $this->write(self::ERROR, $message, $context);
+    }
+
+    public function warning(string $message, array $context = []): void
+    {
+        $this->write(self::WARNING, $message, $context);
+    }
+
+    public function notice(string $message, array $context = []): void
+    {
+        $this->write(self::NOTICE, $message, $context);
+    }
+
+    public function info(string $message, array $context = []): void
+    {
+        $this->write(self::INFO, $message, $context);
+    }
+
+    public function debug(string $message, array $context = []): void
+    {
+        $this->write(self::DEBUG, $message, $context);
+    }
+
+    /**
+     * Generic log method
      */
     public function log(string $level, string $message, array $context = []): void
     {
-        $levelIndex = array_search(strtolower($level), $this->levels);
-        $currentLevelIndex = array_search($this->level, $this->levels);
+        $this->write($level, $message, $context);
+    }
 
-        // Skip if level is below current log level
-        if ($levelIndex < $currentLevelIndex) {
-            return;
+    // Convenience methods
+
+    /**
+     * Log database query
+     */
+    public function query(string $sql, array $bindings = [], float $duration = null): void
+    {
+        $context = ['bindings' => $bindings];
+        if ($duration !== null) {
+            $context['duration'] = round($duration, 4) . 's';
         }
 
-        $logFile = $this->logDir . '/' . date('Y-m-d') . '.log';
-        $this->rotateIfNeeded($logFile);
-
-        $logEntry = [
-            'timestamp' => date('Y-m-d H:i:s'),
-            'level' => strtoupper($level),
-            'message' => $message,
-            'context' => $context
-        ];
-
-        $line = json_encode($logEntry) . "\n";
-        file_put_contents($logFile, $line, FILE_APPEND | LOCK_EX);
+        $this->debug("Query: {$sql}", $context);
     }
 
     /**
-     * Log debug message
+     * Log SQL error
      */
-    public function debug(string $message, array $context = []): void
+    public function sqlError(string $sql, string $error, array $bindings = []): void
     {
-        $this->log('debug', $message, $context);
+        $this->error("SQL Error: {$error}", [
+            'sql' => $sql,
+            'bindings' => $bindings
+        ]);
     }
 
     /**
-     * Log info message
+     * Log exception
      */
-    public function info(string $message, array $context = []): void
+    public function exception(\Throwable $e, array $context = []): void
     {
-        $this->log('info', $message, $context);
+        $this->error($e->getMessage(), array_merge([
+            'exception' => get_class($e),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+            'trace' => $e->getTraceAsString()
+        ], $context));
     }
 
     /**
-     * Log warning message
+     * Log performance metric
      */
-    public function warn(string $message, array $context = []): void
+    public function performance(string $operation, float $duration, array $context = []): void
     {
-        $this->log('warn', $message, $context);
+        $this->info("Performance: {$operation} took " . round($duration, 4) . "s", $context);
     }
 
-    /**
-     * Log error message
-     */
-    public function error(string $message, array $context = []): void
+    // Static helper methods for easy access
+
+    public static function emergencyStatic(string $message, array $context = []): void
     {
-        $this->log('error', $message, $context);
+        self::getInstance()->emergency($message, $context);
     }
 
-    /**
-     * Rotate log file if needed
-     */
-    protected function rotateIfNeeded(string $logFile): void
+    public static function alertStatic(string $message, array $context = []): void
     {
-        if (!file_exists($logFile)) {
-            return;
-        }
-
-        if (filesize($logFile) >= $this->maxFileSize) {
-            // Rotate existing files
-            for ($i = $this->maxFiles - 1; $i >= 1; $i--) {
-                $oldFile = $logFile . '.' . $i;
-                $newFile = $logFile . '.' . ($i + 1);
-                
-                if (file_exists($oldFile)) {
-                    if ($i + 1 <= $this->maxFiles) {
-                        rename($oldFile, $newFile);
-                    } else {
-                        unlink($oldFile);
-                    }
-                }
-            }
-
-            // Move current file
-            rename($logFile, $logFile . '.1');
-        }
+        self::getInstance()->alert($message, $context);
     }
 
-    /**
-     * Static helper methods
-     */
-    public static function debugStatic(string $message, array $context = []): void
+    public static function criticalStatic(string $message, array $context = []): void
     {
-        self::getInstance()->debug($message, $context);
+        self::getInstance()->critical($message, $context);
+    }
+
+    public static function errorStatic(string $message, array $context = []): void
+    {
+        self::getInstance()->error($message, $context);
+    }
+
+    public static function warningStatic(string $message, array $context = []): void
+    {
+        self::getInstance()->warning($message, $context);
+    }
+
+    public static function warnStatic(string $message, array $context = []): void
+    {
+        self::getInstance()->warning($message, $context);
+    }
+
+    public static function noticeStatic(string $message, array $context = []): void
+    {
+        self::getInstance()->notice($message, $context);
     }
 
     public static function infoStatic(string $message, array $context = []): void
@@ -141,14 +369,8 @@ class Logger
         self::getInstance()->info($message, $context);
     }
 
-    public static function warnStatic(string $message, array $context = []): void
+    public static function debugStatic(string $message, array $context = []): void
     {
-        self::getInstance()->warn($message, $context);
-    }
-
-    public static function errorStatic(string $message, array $context = []): void
-    {
-        self::getInstance()->error($message, $context);
+        self::getInstance()->debug($message, $context);
     }
 }
-

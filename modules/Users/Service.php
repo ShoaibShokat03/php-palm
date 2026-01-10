@@ -34,29 +34,30 @@ class Service extends BaseService
      * Create Users
      * Uses ActiveRecord: Model::create()
      */
+    /**
+     * Create Users
+     * Uses Model validation directly!
+     */
     public function create(array $data): array
     {
-        // Add validation here
-        $required = ['name']; // Update required fields
-        $errors = [];
+        // 1. Validate data against Model attributes
+        // This throws ValidationException if invalid
+        // Returns a populated Model instance
+        $model = Model::validate($data);
 
-        foreach ($required as $field) {
-            if (empty($data[$field])) {
-                $errors[$field] = "The {$field} field is required";
-            }
-        }
+        // 2. Save the validated model
+        // Since validate() returns a populated (but unsaved) model, we check if it needs saving
+        // Actually, create() in ActiveRecord creates a NEW instance. 
+        // Let's use the standard create flow:
 
-        if (!empty($errors)) {
-            return [
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $errors
-            ];
-        }
+        // Convert validated model back to array for the static create() helper 
+        // (or just save the instance returned by validate() if we update logic)
 
-        $model = Model::create($data);
+        // Better approach: Since validate() returns a populated Model instance, we can just save it!
+        // But Model::validate() returns a generic instance essentially hydrated. 
 
-        if ($model) {
+        // $model is already hydrated with validated data.
+        if ($model->save()) {
             return [
                 'success' => true,
                 'data' => $model->toArray()
@@ -76,7 +77,7 @@ class Service extends BaseService
     public function update(int $id, array $data): array
     {
         $model = Model::find($id);
-        
+
         if (!$model) {
             return [
                 'success' => false,
@@ -109,7 +110,7 @@ class Service extends BaseService
     public function delete(int $id): array
     {
         $model = Model::find($id);
-        
+
         if (!$model) {
             return [
                 'success' => false,

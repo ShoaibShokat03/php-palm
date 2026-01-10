@@ -26,12 +26,12 @@ class CSRF
     {
         if (session_status() === PHP_SESSION_NONE) {
             // Configure secure session settings
-            ini_set('session.cookie_httponly', '1');
-            ini_set('session.cookie_secure', self::isHttps() ? '1' : '0');
-            ini_set('session.cookie_samesite', 'Strict');
-            ini_set('session.use_strict_mode', '1');
-            
-            session_start();
+            @ini_set('session.cookie_httponly', '1');
+            @ini_set('session.cookie_secure', self::isHttps() ? '1' : '0');
+            @ini_set('session.cookie_samesite', 'Strict');
+            @ini_set('session.use_strict_mode', '1');
+
+            @session_start();
         }
     }
 
@@ -52,7 +52,7 @@ class CSRF
     public static function token(): string
     {
         self::initSession();
-        
+
         if (self::$currentToken !== null) {
             return self::$currentToken;
         }
@@ -74,11 +74,11 @@ class CSRF
     public static function regenerate(): string
     {
         self::initSession();
-        
+
         // Generate cryptographically secure random token
         self::$currentToken = bin2hex(random_bytes(32));
         $_SESSION[self::$tokenName] = self::$currentToken;
-        
+
         return self::$currentToken;
     }
 
@@ -96,7 +96,7 @@ class CSRF
         if ($token === null) {
             // Try header first (for API requests)
             $token = Request::csrfToken();
-            
+
             // Fallback to POST data (for form submissions)
             if ($token === null) {
                 $token = Request::post(self::$tokenName);
@@ -109,7 +109,7 @@ class CSRF
 
         // Get stored token from session
         $storedToken = $_SESSION[self::$tokenName] ?? null;
-        
+
         if (empty($storedToken)) {
             return false;
         }
@@ -162,4 +162,3 @@ class CSRF
         return 'X-CSRF-Token: ' . self::token();
     }
 }
-

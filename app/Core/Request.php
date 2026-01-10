@@ -29,15 +29,15 @@ class Request
             self::$post = $_POST ?? [];
             self::$files = $_FILES ?? [];
             self::$body = file_get_contents('php://input');
-            
+
             // Parse body (needs method to be set first)
             self::$parsedBody = self::parseBody();
-            
+
             // Parse PUT, DELETE, PATCH from body
             self::$put = self::parseMethodBody('PUT');
             self::$delete = self::parseMethodBody('DELETE');
             self::$patch = self::parseMethodBody('PATCH');
-            
+
             // Merge all input sources
             self::$allInput = array_merge(
                 self::$get,
@@ -55,17 +55,17 @@ class Request
         if (self::$method !== $method) {
             return [];
         }
-        
+
         if (is_array(self::$parsedBody)) {
             return self::$parsedBody;
         }
-        
+
         // Try to parse as form data
         if (!empty(self::$body)) {
             parse_str(self::$body, $parsed);
             return is_array($parsed) ? $parsed : [];
         }
-        
+
         return [];
     }
 
@@ -468,7 +468,7 @@ class Request
     public static function bearerToken(): ?string
     {
         $auth = self::authorization();
-        
+
         if ($auth === null) {
             return null;
         }
@@ -671,11 +671,32 @@ class Request
     /**
      * Get base URL
      */
-    public static function baseUrl(): string
+    /**
+     * Set locale from header or fallback
+     */
+    public static function setLocale(string $locale): void
     {
-        $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https://' : 'http://';
-        $host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost';
-        return $protocol . $host;
+        // Placeholder if locale setting logic exists
+    }
+
+    /**
+     * Validate request data against a DTO class
+     * 
+     * @template T
+     * @param class-string<T> $dtoClass
+     * @return T
+     * @throws \Frontend\Palm\Validation\ValidationException
+     */
+    public static function validate(string $dtoClass): object
+    {
+        self::init();
+
+        // Ensure Validator class is loaded
+        if (!class_exists('Frontend\Palm\Validation\Validator')) {
+            require_once dirname(__DIR__, 2) . '/app/Palm/Validation/Validator.php';
+        }
+
+        return \Frontend\Palm\Validation\Validator::validate($dtoClass, self::all());
     }
 
     // Parse input body based on Content-Type

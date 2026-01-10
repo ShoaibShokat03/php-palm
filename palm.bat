@@ -1,24 +1,36 @@
 @echo off
-REM Palm CLI Launcher with Better Console Settings
-REM This batch file sets up the console for optimal readability
+REM Palm CLI Launcher with Verified Setup
+REM This batch file ensures the environment is ready before running Palm
 
-REM Enable UTF-8 encoding for better character support (Windows 10+)
+REM Enable delayed expansion
+setlocal EnableDelayedExpansion
+
+REM Enable UTF-8 encoding
 chcp 65001 >nul 2>&1
 
-REM Set console window title
-title PHP Palm CLI
+REM Set styling: Title and Size
+title PHP Palm CLI - World's Super Framework
+REM Increased buffer size: 120 columns, 3000 lines for scrollable output
+mode con: cols=120 lines=3000
 
-REM Set console buffer and window size for better readability
-REM Note: Font must be set manually via console properties
-REM Recommended: Consolas or Lucida Console, size 12-14
-REM To set font: Right-click title bar > Properties > Font tab
-mode con: cols=100 lines=40
+REM Check if PHP is in PATH
+php -v >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo [ERROR] PHP is not found in your PATH.
+    echo Please install PHP and add it to your system PATH variables.
+    echo.
+    pause
+    exit /b 1
+)
 
-REM Clear screen for clean output
-cls
+REM Optional: Clear screen to start fresh
+REM Commented out to preserve scrollable history
+REM cls
 
-REM Run palm.php with all arguments passed through
+REM Run the main Palm PHP script
+REM "%~dp0" resolves to the directory of this batch file
 php "%~dp0app\scripts\palm.php" %*
 
-REM Preserve exit code
+REM Preserve exit code from PHP script
 exit /b %ERRORLEVEL%

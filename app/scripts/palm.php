@@ -7,6 +7,9 @@ if (file_exists($baseDir . '/vendor/autoload.php')) {
     require $baseDir . '/vendor/autoload.php';
 }
 
+// Load migration & seeder handlers
+require_once __DIR__ . '/migration-handlers.php';
+
 if ($argc < 2) {
     showHelp($baseDir);
     exit(0);
@@ -23,6 +26,10 @@ switch ($command) {
     case 'serve':
         $serveArgs = array_slice($argv, 2);
         handleServeCommand($baseDir, $serveArgs);
+        break;
+    case 'serve:worker':
+        $serveArgs = array_slice($argv, 2);
+        handleServeWorkerCommand($baseDir, $serveArgs);
         break;
     case 'cache':
         $cacheAction = strtolower($argv[2] ?? '');
@@ -41,6 +48,45 @@ switch ($command) {
     case 'optimize':
         handleOptimizeCommand($baseDir, array_slice($argv, 2));
         break;
+    case 'logs:clear':
+        handleLogsClearCommand($baseDir);
+        break;
+    case 'cache:clear':
+        handleCacheClearCommand($baseDir);
+        break;
+    case 'logs:view':
+        handleLogsViewCommand($baseDir, array_slice($argv, 2));
+        break;
+    case 'logs:tail':
+        handleLogsTailCommand($baseDir);
+        break;
+    case 'make:migration':
+        handleMakeMigrationCommand($baseDir, array_slice($argv, 2));
+        break;
+    case 'make:seeder':
+        handleMakeSeederCommand($baseDir, array_slice($argv, 2));
+        break;
+    case 'migrate':
+        handleMigrateCommand($baseDir, array_slice($argv, 2));
+        break;
+    case 'migrate:rollback':
+        handleMigrateRollbackCommand($baseDir);
+        break;
+    case 'migrate:reset':
+        handleMigrateResetCommand($baseDir);
+        break;
+    case 'migrate:refresh':
+        handleMigrateRefreshCommand($baseDir, array_slice($argv, 2));
+        break;
+    case 'migrate:status':
+        handleMigrateStatusCommand($baseDir);
+        break;
+    case 'migrate:test':
+        handleMigrateTestCommand($baseDir);
+        break;
+    case 'db:seed':
+        handleDbSeedCommand($baseDir, array_slice($argv, 2));
+        break;
     case 'i18n:extract':
     case 'i18n:generate':
     case 'i18n:check':
@@ -48,6 +94,10 @@ switch ($command) {
         break;
     case 'security:headers':
         handleSecurityHeadersCommand($baseDir, array_slice($argv, 2));
+        break;
+    case 'help':
+    case 'list':
+        showHelp($baseDir);
         break;
     default:
         echo "Unknown command: {$command}\n\n";
@@ -186,7 +236,7 @@ function scaffoldFrontend(string $baseDir): void
     $liveReloadJsPath = $assetsDir . '/live-reload.js';
 
     $files = [
-        $routesDir . '/main.php' => getMainTemplate(),
+        $routesDir . '/web.php' => getMainTemplate(),
         $layoutDir . '/main.php' => getLayoutTemplate(),
         $viewsDir . '/index.palm.php' => getHomeTemplate(),
         $viewsDir . '/demo.palm.php' => getDemoTemplate(),
@@ -217,7 +267,7 @@ function scaffoldFrontend(string $baseDir): void
             '.palm-router.php',
             '.palm-ws-port',
         ];
-        
+
         $entriesToAdd = [];
         foreach ($hotReloadEntries as $entry) {
             // Check if entry exists (as exact line or in a pattern)
@@ -225,7 +275,7 @@ function scaffoldFrontend(string $baseDir): void
                 $entriesToAdd[] = $entry;
             }
         }
-        
+
         if (!empty($entriesToAdd)) {
             // Check if we already have a Palm hot reload section
             if (strpos($gitignoreContent, '# Palm hot reload files') === false) {
@@ -241,7 +291,7 @@ function scaffoldFrontend(string $baseDir): void
 
     echo "\n✅ Frontend scaffold ready inside ./src (non-/api requests still routed via index.php).\n";
     echo "🧩 Structure:\n";
-    echo "   - src/routes/main.php (frontend entry)\n";
+    echo "   - src/routes/web.php (frontend entry)\n";
     echo "   - src/layouts/main.php (clean HTML/PHP layout)\n";
     echo "   - src/views/home/*.palm.php (reactive component views)\n";
     echo "   - src/assets/ (assets: CSS, JS, live-reload script)\n";
@@ -414,375 +464,502 @@ function getLayoutTemplate(): string
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= htmlspecialchars($title ?? 'PHP Palm') ?></title>
-    <meta name="description" content="<?= htmlspecialchars($meta['description'] ?? 'PHP Palm Frontend') ?>">
+    <meta name="description" content="<?= htmlspecialchars($meta['description'] ?? 'Modern PHP Framework') ?>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         :root {
-            color-scheme: light dark;
+            /* Palm Theme - Tropical Color Palette */
+            --color-primary:  #10b981;        /* Emerald green - palm leaves */
+            --color-primary-dark: #059669;   /* Deep emerald */
+            --color-primary-light: #34d399;  /* Light emerald */
+            --color-secondary: #f59e0b;      /* Sandy gold - beach sand */
+            --color-accent: #06b6d4;         /* Ocean turquoise */
+            
+            /* Neutral Colors */
+            --color-bg: #f0fdf4;             /* Very light mint */
+            --color-bg-alt: #dcfce7;         /* Light mint */
+            --color-surface: #ffffff;
+            --color-border: #d1fae5;         /* Mint border */
+            
+            /* Text Colors */
+            --color-text: #064e3b;           /* Deep forest green */
+            --color-text-light: #047857;     /* Forest green */
+            --color-text-muted: #6ee7b7;     /* Light emerald */
+            
+            /* Shadows */
+            --shadow-sm: 0 1px 2px 0 rgb(16 185 129 / 0.05);
+            --shadow-md: 0 4px 6px -1px rgb(16 185 129 / 0.1);
+            --shadow-lg: 0 10px 15px -3px rgb(16 185 129 / 0.1);
+            --shadow-xl: 0 20px 25px -5px rgb(16 185 129 / 0.1);
+            
+            /* Spacing */
+            --spacing-xs: 0.5rem;
+            --spacing-sm: 0.75rem;
+            --spacing-md: 1rem;
+            --spacing-lg: 1.5rem;
+            --spacing-xl: 2rem;
+            --spacing-2xl: 3rem;
+            
+            /* Border Radius */
+            --radius-sm: 0.375rem;
+            --radius-md: 0.5rem;
+            --radius-lg: 0.75rem;
+            --radius-xl: 1rem;
+            --radius-full: 9999px;
+            
+            /* Transitions */
+            --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         body {
-            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            margin: 0;
-            padding: 0;
-            background: #f7f8fb;
-            color: #1f2933;
-            overflow: scroll;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--color-bg);
+            color: var(--color-text);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
 
+        /* Header Styles */
         header {
-            background: linear-gradient(120deg, #0d6efd, #00b4d8);
-            color: #fff;
-            padding: 1.5rem 2rem;
+            background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+            backdrop-filter: blur(10px);
+            box-shadow: var(--shadow-lg);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header-container {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: var(--spacing-lg) var(--spacing-xl);
             display: flex;
             align-items: center;
             justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 1rem;
+            gap: var(--spacing-lg);
         }
 
-        header h1 {
-            margin: 0;
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-sm);
+            text-decoration: none;
+            color: white;
+            font-weight: 700;
             font-size: 1.5rem;
-            font-weight: 600;
-            letter-spacing: 0.5px;
+            letter-spacing: -0.02em;
+            transition: transform var(--transition-fast);
         }
 
+        .logo:hover {
+            transform: translateY(-2px);
+        }
+
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+            backdrop-filter: blur(10px);
+        }
+
+        /* Navigation */
         nav {
             display: flex;
-            gap: 1rem;
+            gap: var(--spacing-xs);
             align-items: center;
         }
 
         nav a {
-            color: #fff;
+            color: rgba(255, 255, 255, 0.9);
             text-decoration: none;
+            padding: var(--spacing-sm) var(--spacing-md);
+            border-radius: var(--radius-md);
             font-weight: 500;
-            padding: 0.35rem 0.75rem;
-            border-radius: 999px;
-            transition: background 0.2s ease, transform 0.2s ease;
+            font-size: 0.9375rem;
+            transition: all var(--transition-base);
+            position: relative;
         }
 
-        nav a.is-active {
-            background: rgba(255, 255, 255, 0.25);
+        nav a::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%) scaleX(0);
+            width: 80%;
+            height: 2px;
+            background: white;
+            border-radius: var(--radius-full);
+            transition: transform var(--transition-base);
         }
 
         nav a:hover {
-            background: rgba(255, 255, 255, 0.18);
-            transform: translateY(-1px);
+            background: rgba(255, 255, 255, 0.15);
+            color: white;
         }
 
+        nav a:hover::after {
+            transform: translateX(-50%) scaleX(1);
+        }
+
+        nav a.is-active {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Mobile Menu Toggle */
+        .mobile-menu-toggle {
+            display: none;
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: var(--spacing-sm);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            transition: all var(--transition-base);
+        }
+
+        .mobile-menu-toggle:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        @media (max-width: 768px) {
+            .header-container {
+                padding: var(--spacing-md) var(--spacing-lg);
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 40px;
+                height: 40px;
+            }
+
+            nav {
+                position: absolute;
+                top: 100%;
+                left: 0;
+                right: 0;
+                background: linear-gradient(135deg, var(--color-primary-dark) 0%, var(--color-secondary) 100%);
+                flex-direction: column;
+                padding: var(--spacing-md);
+                gap: var(--spacing-xs);
+                box-shadow: var(--shadow-xl);
+                transform: translateY(-100%);
+                opacity: 0;
+                pointer-events: none;
+                transition: all var(--transition-base);
+            }
+
+            nav.active {
+                transform: translateY(0);
+                opacity: 1;
+                pointer-events: all;
+            }
+
+            nav a {
+                width: 100%;
+                text-align: left;
+            }
+        }
+
+        /* Main Content */
         main {
-            padding: 3rem clamp(1.25rem, 4vw, 3rem);
-            min-height: 60vh;
-            max-width: 1200px;
+            max-width: 1280px;
             margin: 0 auto;
+            padding: var(--spacing-2xl) var(--spacing-xl);
+            min-height: calc(100vh - 200px);
         }
 
-        footer {
-            padding: 1rem 2rem;
-            color: #6b7a89;
-            font-size: 0.9rem;
-            text-align: center;
-            border-top: 1px solid rgba(15, 23, 42, 0.08);
+        @media (max-width: 768px) {
+            main {
+                padding: var(--spacing-xl) var(--spacing-lg);
+            }
         }
 
-        /* Content sections - clean, no cards or shadows */
+        /* Content Section */
         .content-section {
             max-width: 900px;
             margin: 0 auto;
         }
 
+        /* Card Styles */
+        .card {
+            background: var(--color-surface);
+            border-radius: var(--radius-xl);
+            padding: var(--spacing-2xl);
+            box-shadow: var(--shadow-md);
+            border: 1px solid var(--color-border);
+            transition: all var(--transition-base);
+        }
+
+        .card:hover {
+            box-shadow: var(--shadow-xl);
+            transform: translateY(-4px);
+        }
+
+        /* Pill Badge */
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--spacing-xs);
+            padding: var(--spacing-xs) var(--spacing-md);
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
+            color: var(--color-primary);
+            border-radius: var(--radius-full);
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin-bottom: var(--spacing-md);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+        }
+
+        /* Typography */
+        h1, h2, h3, h4, h5, h6 {
+            color: var(--color-text);
+            font-weight: 700;
+            line-height: 1.2;
+            letter-spacing: -0.02em;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: var(--spacing-md);
+        }
+
+        h2 {
+            font-size: 2rem;
+            margin: var(--spacing-lg) 0 var(--spacing-md);
+        }
+
+        h3 {
+            font-size: 1.5rem;
+            margin: var(--spacing-md) 0 var(--spacing-sm);
+        }
+
+        h4 {
+            font-size: 1.25rem;
+            margin: var(--spacing-md) 0 var(--spacing-sm);
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 2rem;
+            }
+
+            h2 {
+                font-size: 1.75rem;
+            }
+
+            h3 {
+                font-size: 1.375rem;
+            }
+        }
+
+        .lead {
+            font-size: 1.125rem;
+            color: var(--color-text-light);
+            line-height: 1.75;
+            margin-bottom: var(--spacing-xl);
+        }
+
+        p {
+            margin-bottom: var(--spacing-md);
+            color: var(--color-text-light);
+        }
+
         /* Links */
         a {
-            color: #0d6efd;
+            color: var(--color-primary);
             text-decoration: none;
-            transition: color 0.2s ease;
+            transition: color var(--transition-fast);
         }
 
         a:hover {
-            color: #0b5ed7;
-            text-decoration: underline;
+            color: var(--color-primary-dark);
         }
 
         /* Lists */
         ul, ol {
-            margin: 1rem 0;
-            padding-left: 1.5rem;
+            margin: var(--spacing-md) 0;
+            padding-left: var(--spacing-xl);
         }
 
         li {
-            margin: 0.5rem 0;
-            line-height: 1.6;
+            margin: var(--spacing-sm) 0;
+            color: var(--color-text-light);
         }
 
         /* Code */
         code {
-            background: rgba(15, 23, 42, 0.08);
-            padding: 0.2rem 0.4rem;
-            border-radius: 4px;
-            font-family: 'Courier New', monospace;
-            font-size: 0.9em;
+            background: var(--color-bg-alt);
+            padding: 0.25rem 0.5rem;
+            border-radius: var(--radius-sm);
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.875em;
+            color: var(--color-primary);
+            border: 1px solid var(--color-border);
         }
 
-        h1 {
-            margin: 0 0 1rem;
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: #0f172a;
-            line-height: 1.2;
-        }
-
-        h2 {
-            margin: 1.5rem 0 1rem;
-            font-size: 1.75rem;
-            font-weight: 600;
-            color: #0f172a;
-            line-height: 1.3;
-        }
-
-        h3 {
-            margin: 1.5rem 0 0.75rem;
-            font-size: 1.5rem;
-            font-weight: 600;
-            color: #0f172a;
-            line-height: 1.3;
-        }
-
-        h4 {
-            margin: 1rem 0 0.5rem;
-            font-size: 1.25rem;
-            font-weight: 600;
-            color: #0f172a;
-        }
-
-        .lead {
-            font-size: 1.1rem;
-            color: #64748b;
-            line-height: 1.6;
-            margin-bottom: 2rem;
-        }
-
-        .features-banner {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.75rem;
-            margin-bottom: 2rem;
-            padding: 1rem 0;
-        }
-
-        .feature-badge {
-            padding: 0.5rem 1rem;
-            border-radius: 999px;
-            font-size: 0.875rem;
-            font-weight: 500;
-            background: rgba(13, 110, 253, 0.08);
-            color: #0d6efd;
-        }
-
-        .state-demo {
-            margin-top: 2rem;
-        }
-
-        .state-demo__heading {
-            margin-bottom: 2rem;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid rgba(15, 23, 42, 0.08);
-        }
-
-        .state-demo__heading h3 {
-            margin: 0 0 0.5rem;
-            font-size: 1.5rem;
-            font-weight: 600;
-        }
-
-        .state-demo__heading p {
-            margin: 0;
-            color: #64748b;
-        }
-
+        /* Demo Section */
         .demo-section {
-            margin: 2rem 0;
-            padding: 1.5rem 0;
-            border-top: 1px solid rgba(15, 23, 42, 0.1);
-        }
-        
-        .demo-section:first-of-type {
-            border-top: none;
-            padding-top: 0;
+            background: var(--color-bg-alt);
+            border-radius: var(--radius-lg);
+            padding: var(--spacing-xl);
+            margin: var(--spacing-lg) 0;
+            border: 1px solid var(--color-border);
         }
 
-        .demo-section h4 {
-            margin: 0 0 1rem;
-            font-size: 1.25rem;
-            font-weight: 600;
-        }
-
-        .state-counter {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 1rem;
-            margin: 1rem 0;
-        }
-
-        .btn-counter {
-            width: 48px;
-            height: 48px;
-            border-radius: 50%;
-            border: 2px solid #0d6efd;
-            background: #fff;
-            color: #0d6efd;
-            font-size: 1.5rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-
-        .btn-counter:hover {
-            background: #0d6efd;
-            color: #fff;
-            transform: scale(1.1);
-        }
-
-        .counter-value {
-            font-size: 2rem;
-            font-weight: 700;
-            color: #0f172a;
-            min-width: 60px;
-            text-align: center;
-        }
-
-        .counter-actions {
-            display: flex;
-            gap: 0.75rem;
-            justify-content: center;
-            margin-top: 1rem;
-        }
-
+        /* Buttons */
         .btn-action,
         .btn-action-secondary {
-            padding: 0.65rem 1.25rem;
-            border-radius: 8px;
+            display: inline-flex;
+            align-items: center;
+            gap: var(--spacing-xs);
+            padding: 0.75rem 1.5rem;
+            border-radius: var(--radius-md);
             border: none;
-            font-weight: 500;
+            font-weight: 600;
+            font-size: 0.9375rem;
             cursor: pointer;
-            transition: all 0.2s ease;
-            font-size: 0.95rem;
+            transition: all var(--transition-base);
+            font-family: inherit;
         }
 
         .btn-action {
-            background: #0d6efd;
-            color: #fff;
+            background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+            color: white;
+            box-shadow: var(--shadow-md);
         }
 
         .btn-action:hover {
-            background: #0b5ed7;
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .btn-action:active {
+            transform: translateY(0);
         }
 
         .btn-action-secondary {
-            background: rgba(13, 110, 253, 0.1);
-            color: #0d6efd;
+            background: var(--color-surface);
+            color: var(--color-primary);
+            border: 2px solid var(--color-border);
         }
 
         .btn-action-secondary:hover {
-            background: rgba(13, 110, 253, 0.15);
+            border-color: var(--color-primary);
+            background: rgba(59, 130, 246, 0.05);
         }
 
+        /* Value Display */
         .value-display {
-            font-size: 1.1rem;
-            margin: 1rem 0;
-            padding: 0.75rem;
-            background: rgba(247, 248, 251, 0.5);
-            border-radius: 6px;
-            border: 1px solid rgba(15, 23, 42, 0.1);
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-md);
+            margin: var(--spacing-md) 0;
         }
 
         .value-display strong {
-            color: #0d6efd;
+            color: var(--color-primary);
             font-weight: 600;
         }
 
-        .action-group {
-            display: flex;
-            gap: 0.75rem;
-            margin-top: 1rem;
+        /* Footer */
+        footer {
+            background: var(--color-surface);
+            border-top: 1px solid var(--color-border);
+            padding: var(--spacing-2xl) var(--spacing-xl);
+            margin-top: var(--spacing-2xl);
+            text-align: center;
+            color: var(--color-text-light);
         }
 
-        .state-actions {
-            display: flex;
-            gap: 1rem;
-            flex-wrap: wrap;
-        }
-
-        .favorite-btn,
-        .loading-btn {
-            padding: 0.75rem 1.5rem;
-            border-radius: 8px;
-            border: 2px solid rgba(13, 110, 253, 0.2);
-            background: #fff;
-            color: #0d6efd;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-
-        .favorite-btn.is-active {
-            background: #0d6efd;
-            color: #fff;
-            border-color: #0d6efd;
-        }
-
-        .loading-btn.is-busy {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-
-        .code-example {
-            margin-top: 2rem;
-            padding: 1.5rem;
-            background: #1e293b;
-            border-radius: 12px;
-            color: #e2e8f0;
-        }
-
-        .code-example h3 {
-            margin: 0 0 1rem;
-            color: #f1f5f9;
-        }
-
-        .code-example pre {
-            margin: 0;
-            overflow-x: auto;
-        }
-
-        .code-example code {
-            font-family: 'Fira Code', 'Courier New', monospace;
-            font-size: 0.875rem;
-            line-height: 1.6;
+        footer strong {
+            background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-weight: 700;
         }
     </style>
 </head>
 <body>
     <header>
-        <h1><a href="/" style="color:inherit;text-decoration:none;">PHP Palm</a></h1>
-        <nav>
-            <a href="/" class="<?= ($currentPath ?? '/') === '/' ? 'is-active' : '' ?>">Home</a>
-            <a href="/about" class="<?= ($currentPath ?? '') === '/about' ? 'is-active' : '' ?>">About</a>
-            <a href="/contact" class="<?= ($currentPath ?? '') === '/contact' ? 'is-active' : '' ?>">Contact</a>
-            <a href="/demo" class="<?= ($currentPath ?? '') === '/demo' ? 'is-active' : '' ?>">Demo</a>
-        </nav>
+        <div class="header-container">
+            <a href="/" class="logo">
+                <div class="logo-icon">🌴</div>
+                <span>PHP Palm</span>
+            </a>
+            <button class="mobile-menu-toggle" onclick="toggleMobileMenu()" aria-label="Toggle menu">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="3" y1="12" x2="21" y2="12"></line>
+                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                    <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+            </button>
+            <nav id="mainNav">
+                <a href="/" class="<?= ($currentPath ?? '/') === '/' ? 'is-active' : '' ?>">Home</a>
+                <a href="/about" class="<?= ($currentPath ?? '') === '/about' ? 'is-active' : '' ?>">About</a>
+                <a href="/contact" class="<?= ($currentPath ?? '') === '/contact' ? 'is-active' : '' ?>">Contact</a>
+                <a href="/demo" class="<?= ($currentPath ?? '') === '/demo' ? 'is-active' : '' ?>">Demo</a>
+            </nav>
+        </div>
     </header>
+    
     <main>
         <?= $content ?? '' ?>
     </main>
+    
     <footer>
-        <p>Built with ❤️ using <strong>PHP Palm</strong> · Modern PHP framework</p>
-        <p style="font-size:0.85rem;margin-top:0.5rem;color:#94a3b8;">
-            <a href="/" style="color:inherit;">Home</a> · 
-            <a href="/about" style="color:inherit;">About</a> · 
-            <a href="/contact" style="color:inherit;">Contact</a>
+        <p>Built with ❤️ using <strong>PHP Palm</strong> · Modern PHP Framework</p>
+        <p style="font-size: 0.875rem; margin-top: 0.5rem; opacity: 0.7;">
+            Fast · Secure · Elegant
         </p>
     </footer>
+
+    <script>
+        function toggleMobileMenu() {
+            const nav = document.getElementById('mainNav');
+            nav.classList.toggle('active');
+        }
+
+        // Close mobile menu when clicking outside
+        document.addEventListener('click', function(event) {
+            const nav = document.getElementById('mainNav');
+            const toggle = document.querySelector('.mobile-menu-toggle');
+            
+            if (!nav.contains(event.target) && !toggle.contains(event.target)) {
+                nav.classList.remove('active');
+            }
+        });
+
+        // Close mobile menu on window resize
+        window.addEventListener('resize', function() {
+            if (window.innerWidth > 768) {
+                document.getElementById('mainNav').classList.remove('active');
+            }
+        });
+    </script>
 </body>
 </html>
 LAYOUT;
@@ -1981,7 +2158,7 @@ PHP;
 
 function showHelp(?string $baseDir = null): void
 {
-    printPalmBanner("Developer Toolkit");
+    printPalmBanner("World's Super Framework");
     $version = getProjectVersion($baseDir);
     $phpVersion = PHP_VERSION;
 
@@ -2000,13 +2177,38 @@ function showHelp(?string $baseDir = null): void
     echo colorText("  palm make component <Name>", 'cyan') . "       → Generate component class\n";
     echo colorText("  palm make pwa", 'cyan') . "                    → Generate PWA files\n";
     echo colorText("  palm make usetable all", 'cyan') . "        → Generate modules from DB tables\n";
-    echo colorText("  palm serve [port]", 'cyan') . "              → Start dev server\n";
+    echo colorText("  palm make:migration <name>", 'cyan') . "     → Create a new migration file\n";
+    echo colorText("  palm make:seeder <name>", 'cyan') . "        → Create a new seeder file\n";
+    echo "\n";
+    echo colorText("Server Commands:\n", 'yellow');
+    echo colorText("  palm serve [port]", 'cyan') . "              → Start standard dev server\n";
+    echo colorText("  palm serve:worker [port]", 'cyan') . "       → Start persistent worker server (High Performance)\n";
     echo colorText("  palm serve [port] --no-open", 'cyan') . "    → Start server without opening browser\n";
     echo colorText("  palm serve [port] --reload", 'cyan') . "     → Force enable hot reload (overrides .env)\n";
     echo colorText("  palm serve [port] --no-reload", 'cyan') . "  → Force disable hot reload (overrides .env)\n";
     echo colorText("", 'cyan') . "                                  Hot reload: Set HOT_RELOAD_ENABLED=true in config/.env\n";
     echo colorText("", 'cyan') . "                                  (Hot reload uses efficient file-based notifications)\n";
+    echo "\n";
+    echo colorText("Database Commands:\n", 'yellow');
+    echo colorText("  palm migrate", 'cyan') . "                   → Run all pending migrations\n";
+    echo colorText("  palm migrate:rollback", 'cyan') . "          → Rollback the last migration batch\n";
+    echo colorText("  palm migrate:reset", 'cyan') . "             → Rollback all migrations\n";
+    echo colorText("  palm migrate:refresh", 'cyan') . "           → Reset and re-run all migrations\n";
+    echo colorText("  palm migrate:status", 'cyan') . "            → Show migration status\n";
+    echo colorText("  palm migrate:test", 'cyan') . "              → Test migrations by generating SQL files\n";
+    echo colorText("  palm db:seed [seeder]", 'cyan') . "          → Run database seeders\n";
+    echo "\n";
+    echo colorText("Cache & Logs Commands:\n", 'yellow');
     echo colorText("  palm cache clear", 'cyan') . "               → Clear all Palm cache files\n";
+    echo colorText("  palm cache:clear", 'cyan') . "              → Clear all Palm cache files (alias)\n";
+    echo colorText("  palm logs:clear", 'cyan') . "               → Clear all log files\n";
+    echo colorText("  palm logs:view [lines]", 'cyan') . "         → View recent log entries (default: 100)\n";
+    echo colorText("  palm logs:tail", 'cyan') . "                → Tail log file in real-time\n";
+    echo colorText("  palm route:list", 'cyan') . "                → List all registered routes\n";
+    echo colorText("  palm route:clear", 'cyan') . "               → Clear route cache\n";
+    echo colorText("  palm view:clear", 'cyan') . "                → Clear compiled view cache\n";
+    echo "\n";
+    echo colorText("Other Commands:\n", 'yellow');
     echo colorText("  palm sitemap:generate", 'cyan') . "          → Generate sitemap.xml and robots.txt\n";
     echo colorText("  palm optimize [css|js|all]", 'cyan') . "     → Minify CSS/JS assets\n";
     echo colorText("  palm i18n:extract", 'cyan') . "              → Extract translatable strings from views\n";
@@ -2020,18 +2222,18 @@ function showHelp(?string $baseDir = null): void
 function handleRouteCommand(string $command, string $baseDir): void
 {
     require_once $baseDir . '/app/Palm/RouteCache.php';
-    
+
     if ($command === 'route:list') {
         require_once $baseDir . '/app/Palm/Route.php';
         \Frontend\Palm\Route::init($baseDir . '/src');
         require $baseDir . '/src/routes/main.php';
-        
+
         $routes = \Frontend\Palm\Route::all();
         $names = \Frontend\Palm\Route::names();
-        
+
         echo colorText("Registered Routes:\n", 'cyan');
         echo str_repeat('=', 80) . "\n";
-        
+
         foreach ($routes as $method => $methodRoutes) {
             echo colorText("\n{$method} Routes:\n", 'yellow');
             foreach ($methodRoutes as $path => $handler) {
@@ -2040,7 +2242,7 @@ function handleRouteCommand(string $command, string $baseDir): void
                 echo "  " . colorText($path, 'cyan') . $nameStr . "\n";
             }
         }
-        
+
         echo "\n" . str_repeat('=', 80) . "\n";
         $total = (count($routes['GET'] ?? [])) + (count($routes['POST'] ?? []));
         echo "Total: {$total} routes\n";
@@ -2057,7 +2259,7 @@ function handleRouteCommand(string $command, string $baseDir): void
 function handleViewCacheCommand(string $baseDir): void
 {
     require_once $baseDir . '/app/Palm/ViewCache.php';
-    
+
     \Frontend\Palm\ViewCache::init($baseDir . '/src');
     if (\Frontend\Palm\ViewCache::clear()) {
         echo colorText("✓ View cache cleared successfully\n", 'green');
@@ -2070,35 +2272,35 @@ function handleSitemapCommand(string $baseDir): void
 {
     require_once $baseDir . '/app/Palm/SitemapGenerator.php';
     require_once $baseDir . '/app/Palm/Route.php';
-    
+
     printPalmBanner("Generate Sitemap");
-    
+
     // Initialize routes
     \Frontend\Palm\Route::init($baseDir . '/src');
     require $baseDir . '/src/routes/main.php';
-    
+
     // Get all routes
     $routes = \Frontend\Palm\Route::all();
-    
+
     // Initialize sitemap generator
     $baseUrl = $_ENV['APP_URL'] ?? 'http://localhost';
     \Frontend\Palm\SitemapGenerator::init($baseDir, $baseUrl);
     \Frontend\Palm\SitemapGenerator::setRoutes($routes);
-    
+
     // Generate sitemap
     if (\Frontend\Palm\SitemapGenerator::generate()) {
         echo colorText("✓ sitemap.xml generated successfully\n", 'green');
     } else {
         echo colorText("✗ Failed to generate sitemap.xml\n", 'red');
     }
-    
+
     // Generate robots.txt
     if (\Frontend\Palm\SitemapGenerator::generateRobotsTxt()) {
         echo colorText("✓ robots.txt generated successfully\n", 'green');
     } else {
         echo colorText("✗ Failed to generate robots.txt\n", 'red');
     }
-    
+
     echo "\n";
     echo colorText("Files created:\n", 'cyan');
     echo "  - {$baseDir}/public/sitemap.xml\n";
@@ -2108,17 +2310,17 @@ function handleSitemapCommand(string $baseDir): void
 function handleOptimizeCommand(string $baseDir, array $args): void
 {
     require_once $baseDir . '/app/Palm/AssetMinifier.php';
-    
+
     printPalmBanner("Optimize Assets");
-    
+
     \Frontend\Palm\AssetMinifier::init($baseDir);
-    
+
     $target = strtolower($args[0] ?? 'all');
     $publicPath = $baseDir . '/public';
-    
+
     $cssFiles = [];
     $jsFiles = [];
-    
+
     // Find CSS files
     if (is_dir($publicPath . '/css')) {
         $cssFiles = glob($publicPath . '/css/*.css');
@@ -2126,7 +2328,7 @@ function handleOptimizeCommand(string $baseDir, array $args): void
     if (empty($cssFiles)) {
         $cssFiles = glob($publicPath . '/*.css');
     }
-    
+
     // Find JS files
     if (is_dir($publicPath . '/js')) {
         $jsFiles = glob($publicPath . '/js/*.js');
@@ -2134,17 +2336,17 @@ function handleOptimizeCommand(string $baseDir, array $args): void
     if (empty($jsFiles)) {
         $jsFiles = glob($publicPath . '/*.js');
     }
-    
+
     $totalFiles = 0;
     $successCount = 0;
-    
+
     if ($target === 'css' || $target === 'all') {
         foreach ($cssFiles as $file) {
             // Skip already minified files
             if (strpos(basename($file), '.min.') !== false) {
                 continue;
             }
-            
+
             $totalFiles++;
             if (\Frontend\Palm\AssetMinifier::minifyFile($file, 'css')) {
                 $successCount++;
@@ -2156,19 +2358,19 @@ function handleOptimizeCommand(string $baseDir, array $args): void
             }
         }
     }
-    
+
     if ($target === 'js' || $target === 'all') {
         foreach ($jsFiles as $file) {
             // Skip already minified files
             if (strpos(basename($file), '.min.') !== false) {
                 continue;
             }
-            
+
             // Skip service worker and other special files
             if (strpos(basename($file), 'sw.js') !== false || strpos(basename($file), 'service-worker') !== false) {
                 continue;
             }
-            
+
             $totalFiles++;
             if (\Frontend\Palm\AssetMinifier::minifyFile($file, 'js')) {
                 $successCount++;
@@ -2180,7 +2382,7 @@ function handleOptimizeCommand(string $baseDir, array $args): void
             }
         }
     }
-    
+
     if ($totalFiles === 0) {
         echo colorText("ℹ No files found to minify.\n", 'yellow');
         echo "   Looking in: {$publicPath}\n";
@@ -2190,48 +2392,48 @@ function handleOptimizeCommand(string $baseDir, array $args): void
         echo "\n";
         echo colorText("Summary: ", 'cyan') . "{$successCount}/{$totalFiles} files minified successfully\n";
     }
-    
+
     echo "\n";
 }
 
 function handleI18nCommand(string $command, string $baseDir, array $args): void
 {
     require_once $baseDir . '/app/Palm/Translator.php';
-    
+
     printPalmBanner("i18n Tools");
-    
+
     switch ($command) {
         case 'i18n:extract':
             echo colorText("ℹ i18n:extract is coming soon\n", 'yellow');
             echo "This will extract translatable strings from your views.\n";
             break;
-            
+
         case 'i18n:generate':
             $locale = $args[0] ?? 'en';
             echo colorText("ℹ i18n:generate is coming soon\n", 'yellow');
             echo "This will generate translation files for locale: {$locale}\n";
             break;
-            
+
         case 'i18n:check':
             echo colorText("ℹ i18n:check is coming soon\n", 'yellow');
             echo "This will check for missing translations.\n";
             break;
     }
-    
+
     echo "\n";
 }
 
 function handleSecurityHeadersCommand(string $baseDir, array $args): void
 {
     require_once $baseDir . '/app/Palm/SecurityHeaders.php';
-    
+
     $action = strtolower($args[0] ?? 'show');
-    
+
     printPalmBanner("Security Headers");
-    
+
     if ($action === 'show' || $action === 'test') {
         $headers = \Frontend\Palm\SecurityHeaders::getHeaders();
-        
+
         if (empty($headers)) {
             echo colorText("ℹ No security headers are currently set.\n", 'yellow');
             echo "\n";
@@ -2244,7 +2446,7 @@ function handleSecurityHeadersCommand(string $baseDir, array $args): void
                 echo colorText("  {$name}:", 'green') . " {$value}\n";
             }
         }
-        
+
         if ($action === 'test') {
             echo "\n";
             echo colorText("Test URLs:\n", 'cyan');
@@ -2258,22 +2460,360 @@ function handleSecurityHeadersCommand(string $baseDir, array $args): void
         echo "  show    Show current security headers (default)\n";
         echo "  test    Show headers with testing URLs\n";
     }
+
+    echo "\n";
+}
+
+function handleMakeFrontendMiddleware(string $baseDir, string $middlewareName): void
+{
+    // Validate name
+    if (!preg_match('/^[a-zA-Z0-9_]+$/', $middlewareName)) {
+        echo "\n";
+        echo "Error: Middleware name can only contain letters, numbers, and underscores\n";
+        echo "\n";
+        exit(1);
+    }
+
+    // Convert to PascalCase and ensure it ends with Middleware
+    $middlewareName = str_replace('_', ' ', $middlewareName);
+    $middlewareName = ucwords(strtolower($middlewareName));
+    $middlewareName = str_replace(' ', '', $middlewareName);
+    $middlewareName = ucfirst($middlewareName);
+
+    // Ensure it ends with "Middleware"
+    if (substr($middlewareName, -10) !== 'Middleware') {
+        $middlewareName .= 'Middleware';
+    }
+
+    $middlewaresPath = $baseDir . '/app/Palm/Middleware';
+
+    // Create middlewares directory if it doesn't exist
+    if (!is_dir($middlewaresPath)) {
+        mkdir($middlewaresPath, 0755, true);
+    }
+
+    $middlewarePath = $middlewaresPath . '/' . $middlewareName . '.php';
+
+    if (file_exists($middlewarePath)) {
+        echo "\n";
+        echo "Error: Frontend middleware already exists: {$middlewarePath}\n";
+        echo "\n";
+        exit(1);
+    }
+
+    $middlewareContent = <<<PHP
+<?php
+
+namespace App\Palm\Middleware;
+
+/**
+ * {$middlewareName}
+ * 
+ * Frontend middleware for handling requests in the Palm framework
+ * 
+ * Usage in routes:
+ * Route::middleware('{$middlewareName}')->get('/path', function() {
+ *     // Your route logic
+ * });
+ */
+class {$middlewareName}
+{
+    /**
+     * Handle the incoming request
+     * 
+     * @param mixed \$request The request object
+     * @param callable \$next The next middleware/handler
+     * @return mixed
+     */
+    public function handle(\$request, callable \$next)
+    {
+        // Add your middleware logic here
+        // 
+        // Example: Check something before proceeding
+        // if (!\$this->someCheck()) {
+        //     http_response_code(403);
+        //     echo json_encode(['error' => 'Access denied']);
+        //     return;
+        // }
+        
+        // Execute the next middleware/handler
+        return \$next(\$request);
+    }
     
+    // Add your custom methods here
+    // 
+    // Example:
+    // protected function someCheck(): bool
+    // {
+    //     // Your validation logic
+    //     return true;
+    // }
+}
+PHP;
+
+    file_put_contents($middlewarePath, $middlewareContent);
+
+    echo "\n";
+    echo "═══════════════════════════════════════════════════════════\n";
+    echo "✅ FRONTEND MIDDLEWARE GENERATED SUCCESSFULLY!\n";
+    echo "═══════════════════════════════════════════════════════════\n";
+    echo "📄 File: {$middlewareName}.php\n";
+    echo "📁 Location: {$middlewarePath}\n";
+    echo "📦 Namespace: App\\Palm\\Middleware\\{$middlewareName}\n";
+    echo "\n";
+    echo "💡 Usage:\n";
+    echo "   Route::middleware('{$middlewareName}')->get('/path', \$handler);\n";
+    echo "\n";
+}
+
+function handleMakeView(string $baseDir, array $args): void
+{
+    if (empty($args)) {
+        echo "\n";
+        echo "Error: View name is required\n";
+        echo "\n";
+        echo "Usage: palm make view <view-name>\n";
+        echo "Example: palm make view home.about\n";
+        echo "\n";
+        exit(1);
+    }
+
+    $viewName = $args[0];
+    $viewParts = explode('.', $viewName);
+
+    // Build the view path
+    $viewPath = $baseDir . '/src/views/' . implode('/', $viewParts) . '.palm.php';
+    $viewDir = dirname($viewPath);
+
+    // Create directory if it doesn't exist
+    if (!is_dir($viewDir)) {
+        mkdir($viewDir, 0755, true);
+    }
+
+    if (file_exists($viewPath)) {
+        echo "\n";
+        echo "Error: View already exists: {$viewPath}\n";
+        echo "\n";
+        exit(1);
+    }
+
+    $viewContent = <<<'VIEW'
+<?php
+/**
+ * View: {$viewName}
+ */
+?>
+<div class="content-section">
+    <h1><?= htmlspecialchars($title ?? 'View Title') ?></h1>
+    <p class="lead"><?= htmlspecialchars($message ?? 'Welcome to your new view!') ?></p>
+    
+    <!-- Add your view content here -->
+</div>
+VIEW;
+
+    file_put_contents($viewPath, $viewContent);
+
+    echo "\n";
+    echo "═══════════════════════════════════════════════════════════\n";
+    echo "✅ VIEW GENERATED SUCCESSFULLY!\n";
+    echo "═══════════════════════════════════════════════════════════\n";
+    echo "📄 File: " . basename($viewPath) . "\n";
+    echo "📁 Location: {$viewPath}\n";
+    echo "\n";
+    echo "💡 Usage in routes:\n";
+    echo "   Route::get('/path', Route::view('{$viewName}', ['title' => 'Page Title']));\n";
+    echo "\n";
+}
+
+function handleMakeComponent(string $baseDir, array $args): void
+{
+    if (empty($args)) {
+        echo "\n";
+        echo "Error: Component name is required\n";
+        echo "\n";
+        echo "Usage: palm make component <ComponentName>\n";
+        echo "Example: palm make component Button\n";
+        echo "Example: palm make component Form.Input\n";
+        echo "\n";
+        exit(1);
+    }
+
+    $componentName = $args[0];
+    $componentParts = explode('.', $componentName);
+    $className = array_pop($componentParts);
+
+    // Build the component path
+    $componentDir = $baseDir . '/app/Palm/Components';
+    if (!empty($componentParts)) {
+        $componentDir .= '/' . implode('/', $componentParts);
+    }
+
+    // Create directory if it doesn't exist
+    if (!is_dir($componentDir)) {
+        mkdir($componentDir, 0755, true);
+    }
+
+    $componentPath = $componentDir . '/' . $className . '.php';
+
+    if (file_exists($componentPath)) {
+        echo "\n";
+        echo "Error: Component already exists: {$componentPath}\n";
+        echo "\n";
+        exit(1);
+    }
+
+    $namespace = 'App\\Palm\\Components';
+    if (!empty($componentParts)) {
+        $namespace .= '\\' . implode('\\', $componentParts);
+    }
+
+    $componentContent = <<<PHP
+<?php
+
+namespace {$namespace};
+
+use Frontend\Palm\Component;
+
+/**
+ * {$className} Component
+ * 
+ * Usage:
+ * <?= Component::render('{$componentName}', ['prop1' => 'value']) ?>
+ */
+class {$className} extends Component
+{
+    /**
+     * Render the component
+     * 
+     * @param array \$props Component properties
+     * @return string
+     */
+    public function render(array \$props = []): string
+    {
+        \$prop1 = \$props['prop1'] ?? 'default value';
+        
+        return <<<HTML
+<div class="component-{$className}">
+    <p>{\$prop1}</p>
+    <!-- Add your component markup here -->
+</div>
+HTML;
+    }
+}
+PHP;
+
+    file_put_contents($componentPath, $componentContent);
+
+    echo "\n";
+    echo "═══════════════════════════════════════════════════════════\n";
+    echo "✅ COMPONENT GENERATED SUCCESSFULLY!\n";
+    echo "═══════════════════════════════════════════════════════════\n";
+    echo "📄 File: {$className}.php\n";
+    echo "📁 Location: {$componentPath}\n";
+    echo "📦 Namespace: {$namespace}\\{$className}\n";
+    echo "\n";
+    echo "💡 Usage in views:\n";
+    echo "   <?= Component::render('{$componentName}', ['prop1' => 'value']) ?>\n";
+    echo "\n";
+}
+
+function handleMakeSecurityPolicy(string $baseDir, array $args): void
+{
+    $preset = $args[0] ?? 'default';
+
+    if (!in_array($preset, ['default', 'strict', 'development'])) {
+        echo "\n";
+        echo "Error: Invalid preset. Choose from: default, strict, development\n";
+        echo "\n";
+        exit(1);
+    }
+
+    $configDir = $baseDir . '/config';
+    if (!is_dir($configDir)) {
+        mkdir($configDir, 0755, true);
+    }
+
+    $policyPath = $configDir . '/security-policy.php';
+
+    if (file_exists($policyPath)) {
+        echo "\n";
+        echo "Warning: Security policy file already exists: {$policyPath}\n";
+        echo "Do you want to overwrite it? (y/n): ";
+        $handle = fopen("php://stdin", "r");
+        $line = fgets($handle);
+        if (trim($line) !== 'y') {
+            echo "Aborted.\n";
+            exit(0);
+        }
+    }
+
+    $policies = [
+        'default' => [
+            'csp' => "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';",
+            'hsts' => 'max-age=31536000; includeSubDomains',
+            'x_frame_options' => 'SAMEORIGIN',
+            'x_content_type_options' => 'nosniff',
+        ],
+        'strict' => [
+            'csp' => "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;",
+            'hsts' => 'max-age=63072000; includeSubDomains; preload',
+            'x_frame_options' => 'DENY',
+            'x_content_type_options' => 'nosniff',
+        ],
+        'development' => [
+            'csp' => "default-src 'self' 'unsafe-inline' 'unsafe-eval'; script-src 'self' 'unsafe-inline' 'unsafe-eval';",
+            'hsts' => '',
+            'x_frame_options' => 'SAMEORIGIN',
+            'x_content_type_options' => 'nosniff',
+        ],
+    ];
+
+    $policy = $policies[$preset];
+
+    $policyContent = <<<PHP
+<?php
+/**
+ * Security Policy Configuration
+ * Preset: {$preset}
+ */
+
+return [
+    'content_security_policy' => '{$policy['csp']}',
+    'strict_transport_security' => '{$policy['hsts']}',
+    'x_frame_options' => '{$policy['x_frame_options']}',
+    'x_content_type_options' => '{$policy['x_content_type_options']}',
+    'referrer_policy' => 'strict-origin-when-cross-origin',
+    'permissions_policy' => 'geolocation=(), microphone=(), camera=()',
+];
+PHP;
+
+    file_put_contents($policyPath, $policyContent);
+
+    echo "\n";
+    echo "═══════════════════════════════════════════════════════════\n";
+    echo "✅ SECURITY POLICY GENERATED SUCCESSFULLY!\n";
+    echo "═══════════════════════════════════════════════════════════\n";
+    echo "📄 File: security-policy.php\n";
+    echo "📁 Location: {$policyPath}\n";
+    echo "🔒 Preset: {$preset}\n";
+    echo "\n";
+    echo "💡 To use this policy, include it in your application:\n";
+    echo "   \$policy = require 'config/security-policy.php';\n";
     echo "\n";
 }
 
 function handleMakePwa(string $baseDir, array $args): void
 {
     require_once $baseDir . '/app/Palm/PwaGenerator.php';
-    
+
     \Frontend\Palm\PwaGenerator::init($baseDir);
-    
+
     printPalmBanner("Generate PWA");
-    
+
     // Get app name from args or use default
     $appName = $args[0] ?? 'My App';
     $shortName = $args[1] ?? substr($appName, 0, 10);
-    
+
     $config = [
         'name' => $appName,
         'short_name' => $shortName,
@@ -2283,27 +2823,27 @@ function handleMakePwa(string $baseDir, array $args): void
         'background_color' => '#ffffff',
         'theme_color' => '#0d6efd',
     ];
-    
+
     // Generate manifest
     if (\Frontend\Palm\PwaGenerator::generateManifest($config)) {
         echo colorText("✓ manifest.json created\n", 'green');
     } else {
         echo colorText("✗ Failed to create manifest.json\n", 'red');
     }
-    
+
     // Generate service worker
     $swConfig = [
         'cache_name' => 'palm-cache-v1',
         'precache' => ['/', '/css/app.css', '/js/app.js'],
         'offline_page' => '/offline.html',
     ];
-    
+
     if (\Frontend\Palm\PwaGenerator::generateServiceWorker($swConfig)) {
         echo colorText("✓ sw.js (service worker) created\n", 'green');
     } else {
         echo colorText("✗ Failed to create service worker\n", 'red');
     }
-    
+
     echo "\n";
     echo colorText("Next steps:\n", 'yellow');
     echo "1. Add PWA meta tags to your layout:\n";
@@ -2314,39 +2854,128 @@ function handleMakePwa(string $baseDir, array $args): void
     echo "4. Test PWA installation on mobile devices\n";
 }
 
+
 function handleCacheCommand(string $action, string $baseDir): void
 {
-    if ($action === 'clear') {
-        clearCache($baseDir);
+    switch ($action) {
+        case 'clear':
+            clearCache($baseDir);
+            break;
+        default:
+            echo "Unknown cache action: {$action}\n";
+            exit(1);
+    }
+}
+
+/**
+ * Handle logs:clear command
+ */
+function handleLogsClearCommand(string $baseDir): void
+{
+    require_once $baseDir . '/app/Core/Logger.php';
+
+    $logger = \App\Core\Logger::getInstance();
+    $count = $logger->clearLogs();
+
+    echo colorText("✓ Logs cleared successfully!", 'green') . "\n";
+    echo "Removed {$count} log file(s).\n";
+}
+
+/**
+ * Handle cache:clear command
+ */
+function handleCacheClearCommand(string $baseDir): void
+{
+    clearCache($baseDir);
+}
+
+/**
+ * Handle logs:view command
+ */
+function handleLogsViewCommand(string $baseDir, array $args): void
+{
+    require_once $baseDir . '/app/Core/Logger.php';
+
+    $lines = isset($args[0]) ? (int)$args[0] : 100;
+    $logger = \App\Core\Logger::getInstance();
+    $logs = $logger->getRecentLogs($lines);
+
+    if (empty($logs)) {
+        echo colorText("No logs found for today.", 'yellow') . "\n";
+        return;
+    }
+
+    echo colorText("Showing last {$lines} log entries:", 'green') . "\n";
+    echo str_repeat('─', 80) . "\n";
+
+    foreach ($logs as $log) {
+        // Color code based on log level
+        if (strpos($log, 'ERROR') !== false || strpos($log, 'CRITICAL') !== false || strpos($log, 'EMERGENCY') !== false) {
+            echo colorText($log, 'red') . "\n";
+        } elseif (strpos($log, 'WARNING') !== false || strpos($log, 'ALERT') !== false) {
+            echo colorText($log, 'yellow') . "\n";
+        } elseif (strpos($log, 'INFO') !== false || strpos($log, 'NOTICE') !== false) {
+            echo colorText($log, 'blue') . "\n";
+        } else {
+            echo $log . "\n";
+        }
+    }
+
+    echo str_repeat('─', 80) . "\n";
+}
+
+/**
+ * Handle logs:tail command
+ */
+function handleLogsTailCommand(string $baseDir): void
+{
+    require_once $baseDir . '/app/Core/Logger.php';
+
+    $logger = \App\Core\Logger::getInstance();
+    $logFile = dirname(dirname(__DIR__)) . '/storage/logs/' . date('Y-m-d') . '.log';
+
+    if (!file_exists($logFile)) {
+        echo colorText("No log file found for today.", 'yellow') . "\n";
+        echo "Log file path: {$logFile}\n";
+        return;
+    }
+
+    echo colorText("Tailing log file (press Ctrl+C to stop):", 'green') . "\n";
+    echo colorText($logFile, 'blue') . "\n";
+    echo str_repeat('─', 80) . "\n";
+
+    // On Windows, use PowerShell's Get-Content -Wait (similar to tail -f)
+    if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+        $cmd = "powershell -Command \"Get-Content -Path '{$logFile}' -Wait -Tail 20\"";
+        passthru($cmd);
     } else {
-        echo "Usage: palm cache clear\n";
-        echo "Actions:\n";
-        echo "  clear    Clear all Palm cache files\n";
-        exit(1);
+        // Unix-like systems
+        $cmd = "tail -f " . escapeshellarg($logFile);
+        passthru($cmd);
     }
 }
 
 function clearCache(string $baseDir): void
 {
     printPalmBanner("Clear Cache");
-    
+
     $cacheDirs = [
         $baseDir . '/storage/cache/palm',
         $baseDir . '/storage/cache/assets',
         $baseDir . '/src/assets/compiled',
     ];
-    
+
     $totalFiles = 0;
     $totalDirs = 0;
-    
+
     foreach ($cacheDirs as $cacheDir) {
         if (!is_dir($cacheDir)) {
             continue;
         }
-        
+
         $files = glob($cacheDir . '/*');
         $deleted = 0;
-        
+
         foreach ($files as $file) {
             if (is_file($file)) {
                 if (@unlink($file)) {
@@ -2358,7 +2987,7 @@ function clearCache(string $baseDir): void
                 }
             }
         }
-        
+
         if ($deleted > 0) {
             echo colorText("Cleared: ", 'green') . "{$cacheDir}\n";
             echo colorText("  Deleted: ", 'cyan') . "{$deleted} file(s)\n";
@@ -2367,7 +2996,7 @@ function clearCache(string $baseDir): void
             echo colorText("Skipped: ", 'yellow') . "{$cacheDir} (already empty)\n";
         }
     }
-    
+
     if ($totalFiles === 0) {
         echo colorText("\nCache is already empty.\n", 'yellow');
     } else {
@@ -2380,7 +3009,7 @@ function deleteDirectory(string $dir): bool
     if (!is_dir($dir)) {
         return false;
     }
-    
+
     $files = array_diff(scandir($dir), ['.', '..']);
     foreach ($files as $file) {
         $path = $dir . '/' . $file;
@@ -2390,7 +3019,7 @@ function deleteDirectory(string $dir): bool
             @unlink($path);
         }
     }
-    
+
     return @rmdir($dir);
 }
 
@@ -2399,13 +3028,13 @@ function handleServeCommand(string $baseDir, array $args): void
     // Load environment variables
     $envPath = $baseDir . '/config';
     $envFile = null;
-    
+
     if (file_exists($envPath . '/.env')) {
         $envFile = $envPath . '/.env';
     } elseif (file_exists($baseDir . '/.env')) {
         $envFile = $baseDir . '/.env';
     }
-    
+
     if ($envFile) {
         // Try to use Dotenv if available
         if (class_exists('\Dotenv\Dotenv')) {
@@ -2426,7 +3055,8 @@ function handleServeCommand(string $baseDir, array $args): void
                     $value = trim($value);
                     // Remove quotes if present
                     if ((substr($value, 0, 1) === '"' && substr($value, -1) === '"') ||
-                        (substr($value, 0, 1) === "'" && substr($value, -1) === "'")) {
+                        (substr($value, 0, 1) === "'" && substr($value, -1) === "'")
+                    ) {
                         $value = substr($value, 1, -1);
                     }
                     if (!empty($key)) {
@@ -2437,11 +3067,11 @@ function handleServeCommand(string $baseDir, array $args): void
             }
         }
     }
-    
+
     // Check .env for hot reload setting (default: false/off)
     $hotReloadEnabled = strtolower($_ENV['HOT_RELOAD_ENABLED'] ?? 'false');
     $hotReloadEnabled = in_array($hotReloadEnabled, ['true', '1', 'yes', 'on'], true);
-    
+
     // Default: enable auto-open browser, hot reload from .env (defaults to off)
     $openBrowser = true;
     $liveReload = $hotReloadEnabled; // Use .env setting as default
@@ -2500,77 +3130,76 @@ function handleServeCommand(string $baseDir, array $args): void
     $command = sprintf('"%s" -S 0.0.0.0:%d -t "%s" "%s"', $phpBinary, $requestedPort, $baseDir, $routerScript);
 
     printPalmBanner("Dev Server");
-    
+
     // Format project path for display (shorten if too long)
     $displayPath = $baseDir;
     if (strlen($displayPath) > 55) {
         $displayPath = '...' . substr($displayPath, -52);
     }
-    
+
     // Box formatting constants
     $boxWidth = 70;
     $labelWidth = 13;
     $valueWidth = $boxWidth - $labelWidth - 4; // -4 for borders and spacing
-    
+
     // Server Information Section
     echo colorText("┌─ Server Information " . str_repeat('─', $boxWidth - 22) . "┐\n", 'cyan');
-    
-    $line = colorText("│ ", 'cyan') . colorText(str_pad("Project:", $labelWidth, ' '), 'green') . 
-            colorText(str_pad($displayPath, $valueWidth, ' '), 'white') . colorText(" │\n", 'cyan');
+
+    $line = colorText("│ ", 'cyan') . colorText(str_pad("Project:", $labelWidth, ' '), 'green') .
+        colorText(str_pad($displayPath, $valueWidth, ' '), 'white') . colorText(" │\n", 'cyan');
     echo $line;
-    
-    $line = colorText("│ ", 'cyan') . colorText(str_pad("Port:", $labelWidth, ' '), 'green') . 
-            colorText(str_pad((string)$requestedPort, $valueWidth, ' '), 'white') . colorText(" │\n", 'cyan');
+
+    $line = colorText("│ ", 'cyan') . colorText(str_pad("Port:", $labelWidth, ' '), 'green') .
+        colorText(str_pad((string)$requestedPort, $valueWidth, ' '), 'white') . colorText(" │\n", 'cyan');
     echo $line;
-    
-    $line = colorText("│ ", 'cyan') . colorText(str_pad("Local URL:", $labelWidth, ' '), 'green') . 
-            colorText(str_pad($url, $valueWidth, ' '), 'cyan') . colorText(" │\n", 'cyan');
+    $line = colorText("│ ", 'cyan') . colorText(str_pad("Local URL:", $labelWidth, ' '), 'green') .
+        colorText(str_pad($url, $valueWidth, ' '), 'cyan') . colorText(" │\n", 'cyan');
     echo $line;
-    
+
     if ($localIp) {
         $networkUrl = "http://{$localIp}:{$requestedPort}";
-        $line = colorText("│ ", 'cyan') . colorText(str_pad("Network URL:", $labelWidth, ' '), 'green') . 
-                colorText(str_pad($networkUrl, $valueWidth, ' '), 'cyan') . colorText(" │\n", 'cyan');
+        $line = colorText("│ ", 'cyan') . colorText(str_pad("Network URL:", $labelWidth, ' '), 'green') .
+            colorText(str_pad($networkUrl, $valueWidth, ' '), 'cyan') . colorText(" │\n", 'cyan');
         echo $line;
     }
-    
+
     $hostUrl = "http://{$hostName}:{$requestedPort}";
-    $line = colorText("│ ", 'cyan') . colorText(str_pad("Host URL:", $labelWidth, ' '), 'green') . 
-            colorText(str_pad($hostUrl, $valueWidth, ' '), 'cyan') . colorText(" │\n", 'cyan');
+    $line = colorText("│ ", 'cyan') . colorText(str_pad("Host URL:", $labelWidth, ' '), 'green') .
+        colorText(str_pad($hostUrl, $valueWidth, ' '), 'cyan') . colorText(" │\n", 'cyan');
     echo $line;
-    
+
     echo colorText("└" . str_repeat('─', $boxWidth) . "┘\n", 'cyan');
     echo "\n";
-    
+
     // Features Section
     echo colorText("┌─ Features " . str_repeat('─', $boxWidth - 13) . "┐\n", 'cyan');
-    
+
     if ($liveReload) {
         $status = "Enabled (watching for file changes)";
-        $line = colorText("│ ", 'cyan') . colorText(str_pad("🔥 Hot Reload:", $labelWidth, ' '), 'green') . 
-                colorText(str_pad($status, $valueWidth, ' '), 'white') . colorText(" │\n", 'cyan');
+        $line = colorText("│ ", 'cyan') . colorText(str_pad("🔥 Hot Reload:", $labelWidth, ' '), 'green') .
+            colorText(str_pad($status, $valueWidth, ' '), 'white') . colorText(" │\n", 'cyan');
         echo $line;
     } else {
         $status = "Disabled (set HOT_RELOAD_ENABLED=true)";
-        $line = colorText("│ ", 'cyan') . colorText(str_pad("🔥 Hot Reload:", $labelWidth, ' '), 'yellow') . 
-                colorText(str_pad($status, $valueWidth, ' '), 'white') . colorText(" │\n", 'cyan');
+        $line = colorText("│ ", 'cyan') . colorText(str_pad("🔥 Hot Reload:", $labelWidth, ' '), 'yellow') .
+            colorText(str_pad($status, $valueWidth, ' '), 'white') . colorText(" │\n", 'cyan');
         echo $line;
     }
-    
+
     if ($openBrowser) {
         $status = "Will open automatically";
-        $line = colorText("│ ", 'cyan') . colorText(str_pad("🌐 Browser:", $labelWidth, ' '), 'green') . 
-                colorText(str_pad($status, $valueWidth, ' '), 'white') . colorText(" │\n", 'cyan');
+        $line = colorText("│ ", 'cyan') . colorText(str_pad("🌐 Browser:", $labelWidth, ' '), 'green') .
+            colorText(str_pad($status, $valueWidth, ' '), 'white') . colorText(" │\n", 'cyan');
         echo $line;
     }
-    
+
     echo colorText("└" . str_repeat('─', $boxWidth) . "┘\n", 'cyan');
     echo "\n";
-    
+
     // Instructions
     echo colorText("💡 ", 'yellow') . colorText("Press ", 'white') . colorText("Ctrl+C", 'yellow') . colorText(" to stop the server\n", 'white');
     echo "\n";
-    
+
     // Separator before server logs
     echo colorText(str_repeat('━', $boxWidth) . "\n", 'cyan');
     echo colorText("Server Logs:\n", 'green');
@@ -2597,7 +3226,7 @@ function handleServeCommand(string $baseDir, array $args): void
     // Cleanup router script, watcher, and WebSocket server if they were created
     if ($liveReload) {
         if (file_exists($routerScript)) {
-        @unlink($routerScript);
+            @unlink($routerScript);
         }
         $watcherScript = $baseDir . '/.palm-file-watcher.php';
         $wsServerScript = $baseDir . '/.palm-websocket-server.php';
@@ -2617,6 +3246,24 @@ function handleServeCommand(string $baseDir, array $args): void
         }
     }
 }
+
+/**
+ * Handle serve:worker command
+ */
+function handleServeWorkerCommand(string $baseDir, array $args): void
+{
+    require_once $baseDir . '/app/Core/WorkerServer.php';
+    require_once $baseDir . '/app/Core/ApplicationBootstrap.php';
+
+    $portArg = $args[0] ?? '8000';
+    $port = (int)$portArg;
+
+    printPalmBanner("Persistent Worker");
+
+    $worker = new \App\Core\WorkerServer('127.0.0.1', $port, $baseDir);
+    $worker->start();
+}
+
 
 function parsePortArgument(?string $arg): ?int
 {
@@ -2822,7 +3469,7 @@ function startBackgroundProcess(string $command): void
 function createWebSocketServer(string $baseDir, string $wsServerScript): void
 {
     $baseDirEscaped = addslashes($baseDir);
-    
+
     $wsServerContent = <<<'WSSERVER'
 <?php
 // Palm WebSocket Server for Hot Reload
@@ -2994,7 +3641,7 @@ function shutdown() {
 }
 register_shutdown_function('shutdown');
 WSSERVER;
-    
+
     $wsServerContent = str_replace('BASE_DIR_PLACEHOLDER', $baseDirEscaped, $wsServerContent);
     file_put_contents($wsServerScript, $wsServerContent);
 }
@@ -3003,7 +3650,7 @@ function startFileWatcher(string $baseDir, string $watcherScript, int $wsPort): 
 {
     // Create the file watcher script
     $baseDirEscaped = addslashes($baseDir);
-    
+
     $watcherContent = <<<'WATCHER'
 <?php
 // Palm File Watcher - Background process for efficient file change detection
@@ -3114,12 +3761,12 @@ while (true) {
     usleep($checkInterval);
 }
 WATCHER;
-    
+
     $watcherContent = str_replace('BASE_DIR_PLACEHOLDER', $baseDirEscaped, $watcherContent);
     $watcherContent = str_replace('WS_PORT_PLACEHOLDER', (string)$wsPort, $watcherContent);
-    
+
     file_put_contents($watcherScript, $watcherContent);
-    
+
     // Start watcher in background
     $phpBinary = PHP_BINARY ?: 'php';
     $command = sprintf('"%s" "%s"', $phpBinary, $watcherScript);
@@ -3132,21 +3779,21 @@ function checkAndEnableSocketsExtension(): bool
     if (extension_loaded('sockets')) {
         return true;
     }
-    
+
     // Try to load extension dynamically (if allowed and available)
     // Note: dl() is usually disabled in modern PHP for security
     if (function_exists('dl') && ini_get('enable_dl')) {
         // Try common extension names
         $extensionNames = ['sockets', 'php_sockets'];
         $extensions = [];
-        
+
         // Determine OS-specific extension file
         if (PHP_OS_FAMILY === 'Windows') {
             $extensions = ['php_sockets.dll'];
         } else {
             $extensions = ['sockets.so', 'php_sockets.so'];
         }
-        
+
         foreach ($extensions as $ext) {
             if (@dl($ext)) {
                 if (extension_loaded('sockets')) {
@@ -3155,7 +3802,7 @@ function checkAndEnableSocketsExtension(): bool
             }
         }
     }
-    
+
     return false;
 }
 
@@ -3165,7 +3812,7 @@ function getPhpIniPath(): ?string
     if ($iniPath && file_exists($iniPath)) {
         return $iniPath;
     }
-    
+
     // Try common locations
     $configPath = defined('PHP_CONFIG_FILE_PATH') ? PHP_CONFIG_FILE_PATH : '';
     $commonPaths = [];
@@ -3174,13 +3821,13 @@ function getPhpIniPath(): ?string
         $commonPaths[] = $configPath . '/php-cli.ini';
     }
     $commonPaths[] = dirname(PHP_BINARY) . '/php.ini';
-    
+
     foreach ($commonPaths as $path) {
         if (file_exists($path)) {
             return $path;
         }
     }
-    
+
     return null;
 }
 
@@ -3189,38 +3836,38 @@ function createLiveReloadRouter(string $baseDir, string $routerScript): void
     // Double-check that hot reload is enabled via env variable
     $hotReloadEnabled = strtolower($_ENV['HOT_RELOAD_ENABLED'] ?? 'false');
     $hotReloadEnabled = in_array($hotReloadEnabled, ['true', '1', 'yes', 'on'], true);
-    
+
     if (!$hotReloadEnabled) {
         // Hot reload is disabled, don't set up anything
         return;
     }
-    
+
     $liveReloadJs = getLiveReloadScript();
     $assetsDir = $baseDir . '/src/assets';
     $liveReloadJsPath = $assetsDir . '/live-reload.js';
-    
+
     // Ensure directory exists
     if (!is_dir($assetsDir)) {
         mkdir($assetsDir, 0777, true);
     }
-    
+
     // Create live reload JavaScript file
     file_put_contents($liveReloadJsPath, $liveReloadJs);
-    
+
     // Create WebSocket server script
     $wsServerScript = $baseDir . '/.palm-websocket-server.php';
     $watcherScript = $baseDir . '/.palm-file-watcher.php';
-    
+
     // Create WebSocket server
     createWebSocketServer($baseDir, $wsServerScript);
-    
+
     // Check and try to enable sockets extension
     $socketsAvailable = checkAndEnableSocketsExtension();
-    
+
     if (!$socketsAvailable) {
         $iniPath = getPhpIniPath();
         echo colorText("⚠️  Warning: ", 'yellow') . "PHP sockets extension not available.\n";
-        
+
         if ($iniPath) {
             echo colorText("   ", 'yellow') . "To enable WebSocket hot reload:\n";
             echo colorText("   1. Open: ", 'cyan') . $iniPath . "\n";
@@ -3231,9 +3878,9 @@ function createLiveReloadRouter(string $baseDir, string $routerScript): void
             echo colorText("   ", 'yellow') . "To enable: Add 'extension=sockets' to your php.ini file\n";
             echo colorText("   ", 'yellow') . "Find php.ini: php --ini\n";
         }
-        
+
         echo colorText("   ", 'yellow') . "Hot reload will use file-based fallback (HTTP polling).\n";
-        
+
         // Fall back to file-based system
         $notificationFile = $baseDir . '/.palm-reload-notify';
         if (!file_exists($notificationFile)) {
@@ -3245,12 +3892,12 @@ function createLiveReloadRouter(string $baseDir, string $routerScript): void
         // Start WebSocket server in background
         $phpBinary = PHP_BINARY ?: 'php';
         $wsPort = findAvailablePort(9000, 9099) ?? 9001;
-        
+
         // Start WebSocket server in background with error output
         $wsCommand = sprintf('"%s" "%s" %d 2>&1', $phpBinary, $wsServerScript, $wsPort);
-        
+
         $logFile = $baseDir . '/.palm-ws-server.log';
-        
+
         if (PHP_OS_FAMILY === 'Windows') {
             // Windows: Use START /B to run in background without blocking
             $wsCommand = sprintf('"%s" "%s" %d', $phpBinary, $wsServerScript, $wsPort);
@@ -3262,20 +3909,20 @@ function createLiveReloadRouter(string $baseDir, string $routerScript): void
             $wsCommand = sprintf('"%s" "%s" %d > "%s" 2>&1 &', $phpBinary, $wsServerScript, $wsPort, $logFile);
             exec($wsCommand);
         }
-        
+
         // Store port immediately and continue (don't wait for server to start)
         echo colorText("🔄 WebSocket Server: ", 'cyan') . "Starting on port {$wsPort}\n";
         // Don't wait - server will start in background, client will connect when ready
-        
+
         // Store WebSocket port for client
         file_put_contents($baseDir . '/.palm-ws-port', (string)$wsPort);
-        
+
         // Start file watcher
         startFileWatcher($baseDir, $watcherScript, $wsPort);
     }
-    
+
     // File watcher is started above based on socket availability
-    
+
     // Create router script that handles live reload endpoint and injects script
     $baseDirEscaped = addslashes($baseDir);
     $routerContent = <<<ROUTER
@@ -3413,7 +4060,7 @@ ob_start(function(\$buffer) use (\$baseDir) {
 
 require \$baseDir . '/index.php';
 ROUTER;
-    
+
     file_put_contents($routerScript, $routerContent);
 }
 
@@ -3588,4 +4235,3 @@ function getLiveReloadScript(): string
 })();
 JS;
 }
-

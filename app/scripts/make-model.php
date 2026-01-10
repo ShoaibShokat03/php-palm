@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Model Generator (Improved)
  * Creates a model with field definitions only (no CRUD - uses ActiveRecord)
@@ -71,48 +72,52 @@ if (file_exists($modelPath)) {
 }
 
 $modelContent = <<<PHP
+php
 <?php
 
 namespace App\\Modules\\{$moduleName};
 
 use App\\Core\\Model as BaseModel;
+use Frontend\\Palm\\Validation\\Attributes\\Required;
+use Frontend\\Palm\\Validation\\Attributes\\IsString;
+use Frontend\\Palm\\Validation\\Attributes\\IsInt;
+use Frontend\\Palm\\Validation\\Attributes\\IsEmail;
 
 /**
  * {$modelName} Model
  * 
- * Uses ActiveRecord pattern - no CRUD methods needed!
+ * Uses ActiveRecord pattern & Model Validation
  * 
  * Usage:
  * - Model::all() - Get all records
- * - Model::where('status', 'active')->all() - Query with conditions
  * - Model::find(1) - Find by ID
  * - Model::create(['name' => 'John']) - Create new record
  * - \$model->save() - Update record
- * - \$model->delete() - Delete record
- * 
- * See ACTIVERECORD_USAGE.md for more examples
  */
 class Model extends BaseModel
 {
     protected string \$table = '{$tableName}';
     
-    // Model fields - add your table fields here for IDE autocomplete
-    // Example:
-    // public \$id;
-    // public \$name;
-    // public \$email;
-    // public \$status;
-    // public \$created_at;
-    // public \$updated_at;
+    // Model fields - defining properties enables Validation Attributes & IDE Autocomplete!
     
+    // Primary Key
+    public int \$id;
+    
+    // Example fields (uncomment to use):
+    
+    // #[Required]
+    // #[IsString]
+    // public string \$name;
+
+    // #[Required]
+    // #[IsEmail]
+    // public string \$email;
+
+    public ?string \$created_at = null;
+    public ?string \$updated_at = null;
+
     /**
      * Optional: Define relationships
-     * 
-     * Example:
-     * public function posts()
-     * {
-     *     return \$this->hasMany(PostsModel::class, 'user_id');
-     * }
      */
 }
 PHP;

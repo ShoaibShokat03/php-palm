@@ -34,9 +34,9 @@ class MiddlewareLoader
 
         foreach ($files as $file) {
             $className = $this->getClassNameFromFile($file);
-            
+
             if ($className && class_exists($className)) {
-                $middleware = new $className();
+                $middleware = Container::getInstance()->make($className);
                 if ($middleware instanceof Middleware) {
                     $name = $this->getMiddlewareName($file);
                     $this->middlewares[$name] = $middleware;
@@ -106,4 +106,3 @@ class MiddlewareLoader
         return basename($file, '.php');
     }
 }
-

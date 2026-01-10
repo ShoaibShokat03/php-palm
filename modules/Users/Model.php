@@ -3,6 +3,11 @@
 namespace App\Modules\Users;
 
 use App\Core\Model as BaseModel;
+use Frontend\Palm\Validation\Attributes\Required;
+use Frontend\Palm\Validation\Attributes\IsString;
+use Frontend\Palm\Validation\Attributes\IsEmail;
+use Frontend\Palm\Validation\Attributes\IsDate;
+use Frontend\Palm\Validation\Attributes\Length;
 
 /**
  * Users Model
@@ -22,11 +27,21 @@ use App\Core\Model as BaseModel;
 class Model extends BaseModel
 {
     protected string $table = 'users';
-    
-    // Model fields - add your table fields here
-    // Example:
-    // public $id;
-    // public $name;
-    // public $email;
-    // public $created_at;
+
+    // Model fields - defining properties enables Validation Attributes & IDE Autocomplete!
+
+    // Primary Key (Optional to define, but good for clarity)
+    public int $id;
+
+    #[Required]
+    #[IsString]
+    #[Length(min: 3, max: 50)]
+    public string $name;
+
+    #[Required]
+    #[IsEmail]
+    public string $email;
+
+    #[IsDate]
+    public ?string $created_at = null;
 }

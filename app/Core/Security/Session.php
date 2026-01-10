@@ -34,12 +34,12 @@ class Session
         self::configure();
 
         if (session_status() === PHP_SESSION_NONE) {
-            session_start();
+            @session_start();
         }
 
         // Validate and regenerate if needed
         self::validate();
-        
+
         self::$initialized = true;
     }
 
@@ -49,18 +49,18 @@ class Session
     protected static function configure(): void
     {
         // Cookie settings
-        ini_set('session.cookie_httponly', '1');
-        ini_set('session.cookie_secure', self::isHttps() ? '1' : '0');
-        ini_set('session.cookie_samesite', 'Strict');
-        
+        @ini_set('session.cookie_httponly', '1');
+        @ini_set('session.cookie_secure', self::isHttps() ? '1' : '0');
+        @ini_set('session.cookie_samesite', 'Strict');
+
         // Security settings
-        ini_set('session.use_strict_mode', '1');
-        ini_set('session.use_cookies', '1');
-        ini_set('session.use_only_cookies', '1');
-        
+        @ini_set('session.use_strict_mode', '1');
+        @ini_set('session.use_cookies', '1');
+        @ini_set('session.use_only_cookies', '1');
+
         // Session lifetime
-        ini_set('session.gc_maxlifetime', (string)self::$lifetime);
-        
+        @ini_set('session.gc_maxlifetime', (string)self::$lifetime);
+
         // Set cookie parameters
         $cookieParams = [
             'lifetime' => self::$lifetime,
@@ -70,8 +70,8 @@ class Session
             'httponly' => true,
             'samesite' => 'Strict'
         ];
-        
-        session_set_cookie_params($cookieParams);
+
+        @session_set_cookie_params($cookieParams);
     }
 
     /**
@@ -115,12 +115,12 @@ class Session
 
         // Update last activity
         $_SESSION['_last_activity'] = time();
-        
+
         // Set creation time if not set
         if (!isset($_SESSION['_created_at'])) {
             $_SESSION['_created_at'] = time();
         }
-        
+
         // Update fingerprint
         $_SESSION['_fingerprint'] = $currentFingerprint;
     }
@@ -188,7 +188,7 @@ class Session
     {
         if (session_status() === PHP_SESSION_ACTIVE) {
             $_SESSION = [];
-            
+
             if (isset($_COOKIE[session_name()])) {
                 $params = session_get_cookie_params();
                 setcookie(
@@ -201,10 +201,10 @@ class Session
                     $params['httponly']
                 );
             }
-            
+
             session_destroy();
         }
-        
+
         self::$initialized = false;
     }
 
@@ -224,4 +224,3 @@ class Session
         self::$idleTimeout = $seconds;
     }
 }
-

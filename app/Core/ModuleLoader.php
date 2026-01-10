@@ -37,9 +37,9 @@ class ModuleLoader
             // Check if module file exists
             if (file_exists($moduleFile)) {
                 $className = "App\\Modules\\{$moduleName}\\Module";
-                
+
                 if (class_exists($className)) {
-                    $module = new $className();
+                    $module = Container::getInstance()->make($className);
                     if ($module instanceof Module) {
                         $this->modules[] = $module;
                         // Set source for conflict detection
@@ -76,4 +76,3 @@ class ModuleLoader
         $module->registerRoutes();
     }
 }
-

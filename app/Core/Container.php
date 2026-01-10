@@ -56,9 +56,10 @@ class Container
      * Resolve a service
      * 
      * @param string $abstract Class name or interface
+     * @param array $parameters Optional parameters to pass to constructor
      * @return mixed Resolved instance
      */
-    public function make(string $abstract)
+    public function make(string $abstract, array $parameters = [])
     {
         // Check if already resolved as singleton
         if (isset($this->singletons[$abstract])) {
@@ -66,7 +67,7 @@ class Container
         }
 
         // Check if already resolved in this request
-        if (isset($this->resolved[$abstract])) {
+        if (empty($parameters) && isset($this->resolved[$abstract])) {
             return $this->resolved[$abstract];
         }
 
@@ -82,37 +83,48 @@ class Container
         }
 
         // Resolve instance
-        $instance = $this->build($concrete);
+        try {
+            $instance = $this->build($concrete, $parameters);
 
-        // Store if singleton
-        if ($isSingleton) {
-            $this->singletons[$abstract] = $instance;
-        } else {
-            $this->resolved[$abstract] = $instance;
+            // Store if singleton
+            if ($isSingleton) {
+                $this->singletons[$abstract] = $instance;
+            } elseif (empty($parameters)) {
+                $this->resolved[$abstract] = $instance;
+            }
+
+            return $instance;
+        } catch (\Throwable $e) {
+            if ($binding) {
+                throw new \Exception("Target [$abstract] is not instantiable while building [" . (is_string($concrete) ? $concrete : 'Closure') . "].", 0, $e);
+            }
+            throw $e;
         }
-
-        return $instance;
     }
 
     /**
      * Build instance with auto-resolving dependencies
+     * 
+     * @param mixed $concrete
+     * @param array $parameters
+     * @return mixed
      */
-    protected function build($concrete)
+    protected function build($concrete, array $parameters = [])
     {
-        // If it's a callable, execute it
-        if (is_callable($concrete) && !is_string($concrete)) {
-            return $concrete($this);
+        // If it's a callable (and not a string class name), execute it
+        if ($concrete instanceof \Closure || (is_callable($concrete) && !is_string($concrete))) {
+            return $concrete($this, $parameters);
         }
 
         // If it's not a class, return as-is
-        if (!class_exists($concrete)) {
+        if (!is_string($concrete) || !class_exists($concrete)) {
             return $concrete;
         }
 
         // Use reflection to auto-resolve dependencies
         try {
             $reflection = new \ReflectionClass($concrete);
-            
+
             // Check if class is instantiable
             if (!$reflection->isInstantiable()) {
                 throw new \Exception("Class {$concrete} is not instantiable");
@@ -127,37 +139,79 @@ class Container
             }
 
             // Resolve constructor parameters
-            $parameters = $constructor->getParameters();
-            $dependencies = [];
-
-            foreach ($parameters as $parameter) {
-                $type = $parameter->getType();
-                
-                if ($type === null) {
-                    // No type hint, try default value
-                    if ($parameter->isDefaultValueAvailable()) {
-                        $dependencies[] = $parameter->getDefaultValue();
-                    } else {
-                        throw new \Exception("Cannot resolve parameter {$parameter->getName()} for {$concrete}");
-                    }
-                } elseif ($type instanceof \ReflectionNamedType && !$type->isBuiltin()) {
-                    // Class type hint - auto-resolve
-                    $dependencyClass = $type->getName();
-                    $dependencies[] = $this->make($dependencyClass);
-                } else {
-                    // Built-in type or default value
-                    if ($parameter->isDefaultValueAvailable()) {
-                        $dependencies[] = $parameter->getDefaultValue();
-                    } else {
-                        throw new \Exception("Cannot resolve parameter {$parameter->getName()} for {$concrete}");
-                    }
-                }
-            }
+            $dependencies = $this->resolveMethodDependencies($constructor, $parameters);
 
             return $reflection->newInstanceArgs($dependencies);
         } catch (\ReflectionException $e) {
             throw new \Exception("Failed to build {$concrete}: " . $e->getMessage());
         }
+    }
+
+    /**
+     * Call a method and resolve its dependencies
+     * 
+     * @param callable|string $callback
+     * @param array $parameters
+     * @return mixed
+     */
+    public function call($callback, array $parameters = [])
+    {
+        if (is_string($callback) && str_contains($callback, '@')) {
+            $parts = explode('@', $callback);
+            $callback = [$this->make($parts[0]), $parts[1]];
+        }
+
+        try {
+            if (is_array($callback)) {
+                $reflection = new \ReflectionMethod($callback[0], $callback[1]);
+            } else {
+                $reflection = new \ReflectionFunction($callback);
+            }
+
+            $dependencies = $this->resolveMethodDependencies($reflection, $parameters);
+
+            return call_user_func_array($callback, $dependencies);
+        } catch (\ReflectionException $e) {
+            throw new \Exception("Failed to call method: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Resolve dependencies for a method or function
+     * 
+     * @param \ReflectionFunctionAbstract $reflection
+     * @param array $parameters
+     * @return array
+     */
+    protected function resolveMethodDependencies(\ReflectionFunctionAbstract $reflection, array $parameters = []): array
+    {
+        $dependencies = [];
+
+        foreach ($reflection->getParameters() as $parameter) {
+            $name = $parameter->getName();
+
+            // Check if provided in parameters array
+            if (array_key_exists($name, $parameters)) {
+                $dependencies[] = $parameters[$name];
+                continue;
+            }
+
+            $type = $parameter->getType();
+
+            if ($type instanceof \ReflectionNamedType && !$type->isBuiltin()) {
+                // Class type hint - auto-resolve via container
+                $dependencies[] = $this->make($type->getName());
+            } elseif ($parameter->isDefaultValueAvailable()) {
+                // No type hint or built-in type, use default if available
+                $dependencies[] = $parameter->getDefaultValue();
+            } elseif ($parameter->isOptional()) {
+                $dependencies[] = null;
+            } else {
+                throw new \Exception("Cannot resolve parameter [{$name}] for [" . $reflection->getName() . "]");
+            }
+        }
+
+        return $dependencies;
     }
 
     /**
@@ -185,4 +239,3 @@ class Container
         return $this->bindings;
     }
 }
-

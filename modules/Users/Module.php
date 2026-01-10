@@ -7,11 +7,6 @@ use App\Modules\Users\Controller;
 use PhpPalm\Core\Route;
 
 /**
- * Note: Routes can also be defined using PHP 8 attributes in Controller
- * Example: #[Get('/users')] on index() method
- */
-
-/**
  * Users Module
  */
 class Module extends BaseModule
@@ -23,12 +18,13 @@ class Module extends BaseModule
 
     public function registerRoutes(): void
     {
-        // Routes are registered via Controller attributes or manually here
-        // Using Controller class reference (DI will handle instantiation)
-        Route::get('/users', [Controller::class, 'index']);
-        Route::get('/users/{id}', [Controller::class, 'show']);
-        Route::post('/users', [Controller::class, 'store']);
-        Route::put('/users/{id}', [Controller::class, 'update']);
-        Route::delete('/users/{id}', [Controller::class, 'destroy']);
+        $controller = new Controller();
+
+        // Register routes
+        Route::get('/users', [$controller, 'index']);
+        Route::get('/users/{id}', [$controller, 'show']);
+        Route::post('/users', [$controller, 'store']);
+        Route::put('/users/{id}', [$controller, 'update']);
+        Route::delete('/users/{id}', [$controller, 'destroy']);
     }
 }

@@ -13,6 +13,16 @@ class Router
     // Dynamic routes (with parameters) grouped by method
     protected array $dynamicRoutes = [];
 
+    /**
+     * Add route with optimized indexing for fast exact matches
+     * Exact routes use O(1) array lookup, dynamic routes use pattern matching
+     * 
+     * @param string $method HTTP method
+     * @param string $path Route path
+     * @param callable|array $handler Route handler
+     * @param string|null $source Route source (for conflict detection)
+     * @param string|null $name Route name (for URL generation)
+     */
     public function add(string $method, string $path, callable|array $handler, ?string $source = null, ?string $name = null): void
     {
         $method = strtoupper($method);
@@ -26,25 +36,27 @@ class Router
         
         $this->routes[] = $route;
         
-        // Build optimized index for direct lookup
+        // Build optimized index for O(1) exact match lookup
         $normalizedPath = $this->normalizePath($path);
         $hasParams = strpos($path, '{') !== false;
         
         if (!$hasParams) {
-            // Exact match route - O(1) lookup
+            // Exact match route - stored in array for instant O(1) lookup
+            // No loops needed during route matching
             if (!isset($this->routeIndex[$method])) {
                 $this->routeIndex[$method] = [];
             }
             $this->routeIndex[$method][$normalizedPath] = $route;
         } else {
-            // Dynamic route - store for pattern matching
+            // Dynamic route with parameters - stored separately for pattern matching
+            // Only checked if exact match fails
             if (!isset($this->dynamicRoutes[$method])) {
                 $this->dynamicRoutes[$method] = [];
             }
             $this->dynamicRoutes[$method][] = $route;
         }
         
-        // Store named route
+        // Store named route for URL generation
         if ($name !== null) {
             $this->namedRoutes[$name] = $route;
         }
@@ -118,22 +130,29 @@ class Router
     }
     
     /**
-     * Direct route dispatch - optimized for speed
-     * Returns route info or null if not found
+     * Fast route lookup with O(1) exact match - optimized for speed
+     * Uses array indexing for exact matches (no loops)
+     * Only loops through dynamic routes if exact match fails
+     * 
+     * @param string $method HTTP method
+     * @param string $targetRoute Normalized route path
+     * @return array|null Route info with handler and params, or null if not found
      */
     public function findRoute(string $method, string $targetRoute): ?array
     {
         $method = strtoupper($method);
         
-        // Direct O(1) lookup for exact matches
-        if (isset($this->routeIndex[$method][$targetRoute])) {
+        // Fast path: Direct O(1) array lookup for exact matches
+        // No loops, no iteration - instant hash map access
+        if (isset($this->routeIndex[$method]) && isset($this->routeIndex[$method][$targetRoute])) {
             return [
                 'route' => $this->routeIndex[$method][$targetRoute],
                 'params' => []
             ];
         }
         
-        // Try dynamic routes (only if no exact match)
+        // Fallback: Try dynamic routes (only if no exact match found)
+        // This is the only place we use a loop, and only for parameterized routes
         if (isset($this->dynamicRoutes[$method])) {
             foreach ($this->dynamicRoutes[$method] as $route) {
                 if (preg_match($route['path'], $targetRoute, $matches)) {
@@ -149,20 +168,29 @@ class Router
         return null;
     }
     
+    /**
+     * Fast route dispatch - optimized for exact matches
+     * Uses O(1) array lookup for exact routes, no loops
+     * 
+     * @param string $method HTTP method
+     * @param string $uri Request URI
+     * @return array Response data
+     */
     public function dispatch(string $method, string $uri)
     {
         try {
-            // Pre-compute route path once
+            // Pre-compute route path once (normalized)
             $targetRoute = $this->prepareRoutePath($uri);
             
-            // Direct route lookup (no loops if exact match)
+            // Fast O(1) route lookup - direct array access, no loops for exact matches
             $routeInfo = $this->findRoute($method, $targetRoute);
             
             if ($routeInfo !== null) {
+                // Execute route immediately - no iteration needed
                 return $this->executeRoute($routeInfo['route'], $routeInfo['params']);
             }
 
-            // Route not found
+            // Route not found - return 404
             http_response_code(404);
             return [
                 'status' => 'error',

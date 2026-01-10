@@ -4,12 +4,8 @@ namespace Frontend\Palm;
 
 /**
  * Route Cache System
- * 
+ *
  * Compiles and caches routes for O(1) lookup performance
- * 
- * Usage:
- * - Automatically enabled in production
- * - Use `palm route:clear` to clear cache
  */
 class RouteCache
 {
@@ -23,39 +19,44 @@ class RouteCache
      */
     public static function init(string $baseDir): void
     {
-        // Set cache directory - use project root
-        $projectRoot = defined('PALM_ROOT') ? PALM_ROOT : dirname($baseDir);
-        $cacheDir = $projectRoot . '/storage/cache/routes';
-        
-        // Create directory if it doesn't exist
-        if (!is_dir($cacheDir)) {
-            @mkdir($cacheDir, 0755, true);
+        $projectRoot = defined('PALM_ROOT')
+            ? PALM_ROOT
+            : dirname($baseDir);
+
+        // 🔥 STEP-BY-STEP directory creation (IMPORTANT)
+        $storageDir      = $projectRoot . '/storage';
+        $cacheBaseDir    = $storageDir . '/cache';
+        $routesCacheDir  = $cacheBaseDir . '/routes';
+
+        if (!is_dir($storageDir)) {
+            mkdir($storageDir, 0755, true);
         }
-        
-        // Also ensure storage/cache exists
-        $storageCache = $projectRoot . '/storage/cache';
-        if (!is_dir($storageCache)) {
-            @mkdir($storageCache, 0755, true);
+
+        if (!is_dir($cacheBaseDir)) {
+            mkdir($cacheBaseDir, 0755, true);
         }
-        
-        self::$cacheDir = $cacheDir;
-        
-        // Check if cache is enabled (disable in development if needed)
+
+        if (!is_dir($routesCacheDir)) {
+            mkdir($routesCacheDir, 0755, true);
+        }
+
+        self::$cacheDir = $routesCacheDir;
+
+        // Enable cache only in production
         self::$enabled = !self::isDevelopment();
     }
 
     /**
-     * Check if we're in development mode
+     * Detect development environment
      */
     protected static function isDevelopment(): bool
     {
-        // Check environment variable or config
         $env = $_ENV['APP_ENV'] ?? $_SERVER['APP_ENV'] ?? 'production';
-        return strtolower($env) === 'development' || strtolower($env) === 'dev';
+        return in_array(strtolower($env), ['dev', 'development'], true);
     }
 
     /**
-     * Get cache file path
+     * Get full cache file path
      */
     protected static function getCacheFilePath(): string
     {
@@ -63,23 +64,25 @@ class RouteCache
     }
 
     /**
-     * Check if cache exists and is valid
+     * Check if valid cache exists
      */
     public static function exists(): bool
     {
         if (!self::$enabled) {
             return false;
         }
-        
+
         $cacheFile = self::getCacheFilePath();
         if (!file_exists($cacheFile)) {
             return false;
         }
 
-        // Check if routes file is newer than cache
-        $routesFile = defined('PALM_ROOT') ? PALM_ROOT . '/src/routes/main.php' : __DIR__ . '/../../src/routes/main.php';
+        $routesFile = defined('PALM_ROOT')
+            ? PALM_ROOT . '/src/routes/web.php'
+            : __DIR__ . '/../../src/routes/web.php';
+
         if (file_exists($routesFile) && filemtime($routesFile) > filemtime($cacheFile)) {
-            return false; // Routes file changed, cache invalid
+            return false;
         }
 
         return true;
@@ -99,20 +102,17 @@ class RouteCache
         }
 
         $cacheFile = self::getCacheFilePath();
-        if (file_exists($cacheFile)) {
-            try {
-                self::$cachedRoutes = require $cacheFile;
-                // Validate loaded routes structure
-                if (is_array(self::$cachedRoutes) && 
-                    (isset(self::$cachedRoutes['GET']) || isset(self::$cachedRoutes['POST']))) {
-                    return self::$cachedRoutes;
-                }
-            } catch (\Throwable $e) {
-                // Cache file is corrupted, delete it
-                error_log("Palm: Invalid route cache file, deleting: " . $e->getMessage());
-                @unlink($cacheFile);
-                self::$cachedRoutes = null;
+
+        try {
+            $routes = require $cacheFile;
+
+            if (is_array($routes)) {
+                self::$cachedRoutes = $routes;
+                return $routes;
             }
+        } catch (\Throwable $e) {
+            error_log('Palm RouteCache load error: ' . $e->getMessage());
+            @unlink($cacheFile);
         }
 
         return null;
@@ -120,7 +120,6 @@ class RouteCache
 
     /**
      * Save routes to cache
-     * Note: Closures cannot be cached, so routes with closures are excluded
      */
     public static function save(array $routes): bool
     {
@@ -128,44 +127,46 @@ class RouteCache
             return false;
         }
 
+        // 😤 ENSURE DIRECTORY EXISTS (NO DRAMA)
+        if (!is_dir(self::$cacheDir)) {
+            mkdir(self::$cacheDir, 0755, true);
+        }
+
         $cacheFile = self::getCacheFilePath();
-        
-        // Filter out routes with closures (cannot be serialized)
         $cacheableRoutes = self::filterCacheableRoutes($routes);
-        
-        // If no cacheable routes, don't create cache file
-        if (empty($cacheableRoutes['GET']) && empty($cacheableRoutes['POST'])) {
-            // Remove cache file if exists
+
+        if (
+            empty($cacheableRoutes['GET']) &&
+            empty($cacheableRoutes['POST'])
+        ) {
             if (file_exists($cacheFile)) {
-                @unlink($cacheFile);
+                unlink($cacheFile);
             }
             return false;
         }
-        
-        // Prepare cache data
-        $cacheData = "<?php\n\n";
-        $cacheData .= "// Auto-generated route cache\n";
-        $cacheData .= "// Generated: " . date('Y-m-d H:i:s') . "\n";
-        $cacheData .= "// DO NOT EDIT MANUALLY\n";
-        $cacheData .= "// Note: Routes with closures are not cached\n\n";
+
+        $cacheData  = "<?php\n\n";
+        $cacheData .= "// Auto-generated Palm route cache\n";
+        $cacheData .= "// Generated at: " . date('Y-m-d H:i:s') . "\n";
+        $cacheData .= "// DO NOT EDIT MANUALLY\n\n";
         $cacheData .= "return " . var_export($cacheableRoutes, true) . ";\n";
 
-        // Write to file atomically
         $tempFile = $cacheFile . '.tmp';
-        if (file_put_contents($tempFile, $cacheData, LOCK_EX) !== false) {
-            return rename($tempFile, $cacheFile);
+
+        if (file_put_contents($tempFile, $cacheData, LOCK_EX) === false) {
+            return false;
         }
 
-        return false;
+        return rename($tempFile, $cacheFile);
     }
 
     /**
-     * Filter out routes with closures (non-cacheable)
+     * Filter cacheable routes only
      */
     protected static function filterCacheableRoutes(array $routes): array
     {
-        $cacheable = [
-            'GET' => [],
+        $result = [
+            'GET'  => [],
             'POST' => [],
         ];
 
@@ -175,14 +176,13 @@ class RouteCache
             }
 
             foreach ($routes[$method] as $path => $route) {
-                // Check if route is cacheable
                 if (self::isRouteCacheable($route)) {
-                    $cacheable[$method][$path] = $route;
+                    $result[$method][$path] = $route;
                 }
             }
         }
 
-        return $cacheable;
+        return $result;
     }
 
     /**
@@ -190,32 +190,15 @@ class RouteCache
      */
     protected static function isRouteCacheable($route): bool
     {
-        // Direct callable (closure) - not cacheable
-        if (is_callable($route) && $route instanceof \Closure) {
+        if ($route instanceof \Closure) {
             return false;
         }
 
-        // Array with handler - check if handler is closure
         if (is_array($route) && isset($route['handler'])) {
-            $handler = $route['handler'];
-            if (is_callable($handler) && $handler instanceof \Closure) {
-                return false;
-            }
-            // ViewHandler instances are cacheable
-            return true;
+            return !($route['handler'] instanceof \Closure);
         }
 
-        // ViewHandler instances are cacheable
-        if (is_object($route) && method_exists($route, 'getSlug')) {
-            return true;
-        }
-
-        // String or non-closure callable is cacheable
-        if (!is_callable($route) || !($route instanceof \Closure)) {
-            return true;
-        }
-
-        return false;
+        return true;
     }
 
     /**
@@ -224,14 +207,16 @@ class RouteCache
     public static function clear(): bool
     {
         $cacheFile = self::getCacheFilePath();
+
         if (file_exists($cacheFile)) {
             return unlink($cacheFile);
         }
+
         return true;
     }
 
     /**
-     * Get cache file path (for CLI commands)
+     * For CLI usage
      */
     public static function getCachePath(): string
     {
@@ -239,11 +224,10 @@ class RouteCache
     }
 
     /**
-     * Check if caching is enabled
+     * Is caching enabled?
      */
     public static function isEnabled(): bool
     {
         return self::$enabled;
     }
 }
-

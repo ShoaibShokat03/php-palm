@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Module Generator (Improved)
  * Creates a complete module with ActiveRecord support
@@ -109,6 +110,61 @@ class Module extends BaseModule
         Route::put('{$routePrefix}/{id}', [\$controller, 'update']);
         Route::delete('{$routePrefix}/{id}', [\$controller, 'destroy']);
     }
+
+    // ============================================
+    // CONVENIENCE METHODS FOR INTERNAL CALLS
+    // ============================================
+
+    /**
+     * Get all records (convenience method)
+     * 
+     * Usage: {$moduleName}Module::all()
+     *        {$moduleName}Module::all(['status' => 'active', 'limit' => 10])
+     */
+    public static function all(array \$filters = []): array
+    {
+        return static::get("/", \$filters);
+    }
+
+    /**
+     * Find record by ID
+     * 
+     * Usage: {$moduleName}Module::find(5)
+     */
+    public static function find(int \$id): ?array
+    {
+        return static::get("/{id}", ['id' => \$id]);
+    }
+
+    /**
+     * Create new record
+     * 
+     * Usage: {$moduleName}Module::createRecord(['name' => 'John'])
+     */
+    public static function createRecord(array \$data): array
+    {
+        return static::post("/", \$data);
+    }
+
+    /**
+     * Update record
+     * 
+     * Usage: {$moduleName}Module::updateRecord(5, ['name' => 'Jane'])
+     */
+    public static function updateRecord(int \$id, array \$data): array
+    {
+        return static::put("/{id}", \$data, ['id' => \$id]);
+    }
+
+    /**
+     * Delete record
+     * 
+     * Usage: {$moduleName}Module::deleteRecord(5)
+     */
+    public static function deleteRecord(int \$id): array
+    {
+        return static::delete("/{id}", ['id' => \$id]);
+    }
 }
 PHP;
 
@@ -135,10 +191,22 @@ class Controller extends BaseController
 
     /**
      * Get all {$moduleName} records
+     * Supports filtering via query parameters
      */
     public function index(): array
     {
-        \$data = \$this->service->getAll();
+        // Extract query parameters for filtering
+        \$filters = [
+            'status' => \$_GET['status'] ?? null,
+            'search' => \$_GET['search'] ?? null,
+            'limit' => isset(\$_GET['limit']) ? (int)\$_GET['limit'] : null,
+            'offset' => isset(\$_GET['offset']) ? (int)\$ _GET['offset'] : null,
+        ];
+        
+        // Remove null values
+        \$filters = array_filter(\$filters, fn(\$v) => \$v !== null);
+        
+        \$data = \$this->service->getAll(\$filters);
         return \$this->success(\$data, '{$moduleName} records retrieved successfully');
     }
 
@@ -207,7 +275,7 @@ PHP;
 file_put_contents($modulePath . '/Controller.php', $controllerContent);
 echo "✅ Created: Controller.php\n";
 
-// Generate Service.php (using ActiveRecord)
+// Generate Service.php (using ActiveRecord & Validation)
 $serviceContent = <<<PHP
 <?php
 
@@ -222,18 +290,34 @@ class Service extends BaseService
      * Get all {$moduleName} records
      * Uses ActiveRecord: Model::all()
      */
-    public function getAll(): array
+    public function getAll(array \$filters = []): array
     {
-        \$records = Model::all();
+        \$query = Model::query();
+        
+        // Example filters
+        if (isset(\$filters['search'])) {
+            \$query->where('name', 'LIKE', '%' . \$filters['search'] . '%');
+        }
+        
+        // Paging
+        if (isset(\$filters['limit'])) {
+            \$query->limit((int)\$filters['limit']);
+        }
+        if (isset(\$filters['offset'])) {
+            \$query->offset((int)\$filters['offset']);
+        }
+        
+        \$records = \$query->all();
+        
         return [
             'total' => \$records->count(),
-            'items' => \$records
+            'items' => \$records,
+            'filters' => \$filters
         ];
     }
 
     /**
      * Get {$moduleName} by ID
-     * Uses ActiveRecord: Model::find()
      */
     public function getById(int \$id): ?array
     {
@@ -243,31 +327,15 @@ class Service extends BaseService
 
     /**
      * Create {$moduleName}
-     * Uses ActiveRecord: Model::create()
      */
     public function create(array \$data): array
     {
-        // Add validation here
-        \$required = ['name']; // Update required fields
-        \$errors = [];
+        // 1. Validate & Hydrate using Model Attributes
+        // Throws ValidationException if invalid
+        \$model = Model::validate(\$data);
 
-        foreach (\$required as \$field) {
-            if (empty(\$data[\$field])) {
-                \$errors[\$field] = "The {\$field} field is required";
-            }
-        }
-
-        if (!empty(\$errors)) {
-            return [
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => \$errors
-            ];
-        }
-
-        \$model = Model::create(\$data);
-
-        if (\$model) {
+        // 2. Save record
+        if (\$model->save()) {
             return [
                 'success' => true,
                 'data' => \$model->toArray()
@@ -282,7 +350,6 @@ class Service extends BaseService
 
     /**
      * Update {$moduleName}
-     * Uses ActiveRecord: \$model->save()
      */
     public function update(int \$id, array \$data): array
     {
@@ -295,7 +362,12 @@ class Service extends BaseService
             ];
         }
 
-        // Update attributes
+        // 1. Manually update fields or re-validate partially?
+        // For updates, we often want to allow partial updates.
+        // Current Model::validate() enforces Required attributes.
+        // For now, let's manually bind. 
+        // TODO: Add Model::validatePartial() for updates.
+        
         foreach (\$data as \$key => \$value) {
             \$model->\$key = \$value;
         }
@@ -315,7 +387,6 @@ class Service extends BaseService
 
     /**
      * Delete {$moduleName}
-     * Uses ActiveRecord: \$model->delete()
      */
     public function delete(int \$id): array
     {
@@ -343,7 +414,7 @@ PHP;
 file_put_contents($modulePath . '/Service.php', $serviceContent);
 echo "✅ Created: Service.php\n";
 
-// Generate Model.php (with field definitions only, no CRUD)
+// Generate Model.php
 $tableName = strtolower($moduleName);
 $modelContent = <<<PHP
 <?php
@@ -351,32 +422,27 @@ $modelContent = <<<PHP
 namespace App\\Modules\\{$moduleName};
 
 use App\\Core\\Model as BaseModel;
+use Frontend\\Palm\\Validation\\Attributes\\Required;
+use Frontend\\Palm\\Validation\\Attributes\\IsString;
 
 /**
  * {$moduleName} Model
- * 
- * Uses ActiveRecord pattern - no CRUD methods needed!
- * 
- * Usage:
- * - Model::all() - Get all records
- * - Model::where('status', 'active')->all() - Query with conditions
- * - Model::find(1) - Find by ID
- * - Model::create(['name' => 'John']) - Create new record
- * - \$model->save() - Update record
- * - \$model->delete() - Delete record
- * 
- * See ACTIVERECORD_USAGE.md for more examples
  */
 class Model extends BaseModel
 {
     protected string \$table = '{$tableName}';
     
-    // Model fields - add your table fields here
-    // Example:
-    // public \$id;
-    // public \$name;
-    // public \$email;
-    // public \$created_at;
+    // Primary Key
+    public int \$id;
+
+    // TODO: Add your fields here with Validation Attributes!
+    
+    // #[Required]
+    // #[IsString]
+    // public string \$name;
+
+    public ?string \$created_at = null;
+    public ?string \$updated_at = null;
 }
 PHP;
 

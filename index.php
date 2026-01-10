@@ -18,6 +18,21 @@ if (function_exists('opcache_reset') && extension_loaded('Zend OPcache')) {
     // OPcache is available - framework will benefit from bytecode caching
 }
 
+/**
+ * Worker-aware exit helper
+ */
+if (!function_exists('palm_exit')) {
+    function palm_exit($response = null)
+    {
+        if (defined('PALM_WORKER')) {
+            if ($response !== null) echo $response;
+            throw new \App\Core\PalmExitException();
+        }
+        if ($response !== null) echo $response;
+        exit;
+    }
+}
+
 if (file_exists(__DIR__ . '/vendor/autoload.php')) {
     require __DIR__ . '/vendor/autoload.php';
 }
@@ -39,11 +54,53 @@ $requestUri = $_SERVER['REQUEST_URI'] ?? '/';
 $requestPath = parse_url($requestUri, PHP_URL_PATH) ?? '/';
 $publicFileServer = new PublicFileServer(__DIR__ . '/public');
 
+// -------- APP DIRECTORY ACCESS CONTROL (Early Block) --------
+// Block direct access to /app/ directory if configured
+if (strpos($requestPath, '/app/') === 0 || preg_match('#(/|^)app/#', $requestPath)) {
+    $appAccessConfig = require __DIR__ . '/config/app_access.php';
+
+    if ($appAccessConfig['restrict_access']) {
+        // Get client IP (handle forwarded headers)
+        $clientIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+        if (isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+            $forwardedIps = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
+            $clientIp = trim($forwardedIps[0]);
+        } elseif (isset($_SERVER['HTTP_X_REAL_IP'])) {
+            $clientIp = $_SERVER['HTTP_X_REAL_IP'];
+        }
+
+        $allowedIps = $appAccessConfig['allowed_ips'] ?? [];
+        $allowInDev = $appAccessConfig['allow_in_dev'] ?? true;
+
+        // Check if in development environment
+        $env = $_ENV['APP_ENV'] ?? $_SERVER['APP_ENV'] ?? 'production';
+        $isDev = $allowInDev && (strtolower($env) === 'development' || strtolower($env) === 'dev');
+
+        // Check if IP is allowed
+        $ipAllowed = in_array($clientIp, $allowedIps) || in_array('*', $allowedIps);
+
+        // Block if not in dev and IP not allowed
+        if (!$isDev && !$ipAllowed) {
+            http_response_code($appAccessConfig['error_code'] ?? 403);
+            header('Content-Type: application/json; charset=UTF-8');
+
+            $errorMessage = $appAccessConfig['error_message'] ?? 'Access to /app/ directory is restricted to developers only.';
+
+            echo json_encode([
+                'status' => 'error',
+                'message' => $errorMessage,
+                'code' => $appAccessConfig['error_code'] ?? 403,
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+            palm_exit();
+        }
+    }
+}
+
 // -------- PUBLIC FILE SERVING (Early Exit) --------
 if (in_array($_SERVER['REQUEST_METHOD'], ['GET', 'HEAD'], true)) {
     if ($publicFileServer->isPublicFileRequest($requestUri)) {
         $publicFileServer->serveFile($requestUri);
-        exit;
+        palm_exit();
     }
 
     $extension = pathinfo($requestPath, PATHINFO_EXTENSION);
@@ -58,7 +115,7 @@ if (in_array($_SERVER['REQUEST_METHOD'], ['GET', 'HEAD'], true)) {
         $testFilePath = $publicPath . '/' . $normalizedPath;
         if (file_exists($testFilePath) && is_file($testFilePath)) {
             $publicFileServer->serveFile($requestUri);
-            exit;
+            palm_exit();
         }
     }
 }
@@ -69,22 +126,36 @@ $isApiRequest = (bool)preg_match('#(^|/)api(/|$)#', $requestPath);
 if (!$isApiRequest) {
     if (in_array($_SERVER['REQUEST_METHOD'], ['GET', 'HEAD'], true) && $publicFileServer->isPublicFileRequest($requestUri)) {
         $publicFileServer->serveFile($requestUri);
-        exit;
+        palm_exit();
     }
 
     // Initialize frontend routing
     ErrorHandler::init();
-    
+
     // Initialize internationalization
     Translator::init(__DIR__);
-    
-    // Initialize auto CSRF injection
+
+    // Initialize progressive resource loader (lazy loading, preloading)
+    require_once __DIR__ . '/app/Palm/ProgressiveResourceLoader.php';
+    \Frontend\Palm\ProgressiveResourceLoader::init();
+
+    // Initialize response optimization (compression, caching) - MUST be before CSRF injector
+    require_once __DIR__ . '/app/Palm/ResponseOptimizer.php';
+    \Frontend\Palm\ResponseOptimizer::init();
+
+    // Initialize auto CSRF injection (uses output buffering)
     CsrfInjector::init();
-    
+
+    // Enable HTML minification and progressive loading in production
+    $env = $_ENV['APP_ENV'] ?? $_SERVER['APP_ENV'] ?? 'production';
+    if (strtolower($env) !== 'development' && strtolower($env) !== 'dev') {
+        \Frontend\Palm\ResponseOptimizer::enableHtmlMinification();
+    }
+
     // Set security headers
     require_once __DIR__ . '/app/Palm/SecurityHeaders.php';
     \Frontend\Palm\SecurityHeaders::setDefaults();
-    
+
     // Initialize Google Auth (if configured)
     try {
         require_once __DIR__ . '/app/Palm/GoogleAuth.php';
@@ -92,7 +163,7 @@ if (!$isApiRequest) {
     } catch (\Exception $e) {
         // Google Auth not configured - silently ignore
     }
-    
+
     // Serve assets from src/assets before routing
     if (in_array($_SERVER['REQUEST_METHOD'], ['GET', 'HEAD'], true)) {
         if (strpos($requestPath, '/src/assets/') === 0) {
@@ -115,40 +186,75 @@ if (!$isApiRequest) {
                     'eot' => 'application/vnd.ms-fontobject',
                 ];
                 $mimeType = $mimeTypes[$ext] ?? 'application/octet-stream';
-                
+
+                $fileSize = filesize($assetFile);
+                $lastModified = filemtime($assetFile);
+                $isLiveReload = strpos(basename($assetFile), 'live-reload') !== false;
+
                 header('Content-Type: ' . $mimeType);
-                if (strpos(basename($assetFile), 'live-reload') !== false) {
-                    header('Cache-Control: no-cache');
+                if ($isLiveReload) {
+                    header('Cache-Control: no-cache, must-revalidate');
                 } else {
                     header('Cache-Control: public, max-age=3600');
+                    header('Last-Modified: ' . gmdate('D, d M Y H:i:s', $lastModified) . ' GMT');
+                    header('ETag: "' . md5($assetFile . $lastModified . $fileSize) . '"');
                 }
-                header('Content-Length: ' . filesize($assetFile));
+                header('Vary: Accept-Encoding');
+
+                // Handle caching
+                if (!$isLiveReload && isset($_SERVER['HTTP_IF_MODIFIED_SINCE'])) {
+                    $ifModifiedSince = strtotime($_SERVER['HTTP_IF_MODIFIED_SINCE']);
+                    if ($ifModifiedSince >= $lastModified) {
+                        http_response_code(304);
+                        palm_exit();
+                    }
+                }
+
+                // Enable compression for text-based assets
+                $compressibleTypes = ['text/css', 'application/javascript', 'text/javascript', 'application/json'];
+                $shouldCompress = in_array($mimeType, $compressibleTypes) && $fileSize > 1024;
+
+                if ($shouldCompress) {
+                    $acceptEncoding = $_SERVER['HTTP_ACCEPT_ENCODING'] ?? '';
+                    if (strpos($acceptEncoding, 'gzip') !== false && function_exists('gzencode')) {
+                        $content = file_get_contents($assetFile);
+                        $compressed = gzencode($content, 6);
+                        if ($compressed !== false && strlen($compressed) < $fileSize) {
+                            header('Content-Encoding: gzip');
+                            header('Content-Length: ' . strlen($compressed));
+                            echo $compressed;
+                            palm_exit();
+                        }
+                    }
+                }
+
+                header('Content-Length: ' . $fileSize);
                 readfile($assetFile);
-                exit;
+                palm_exit();
             }
         }
     }
-    
+
     FrontendRoute::init(__DIR__ . '/src');
 
-           // Load route definitions
-           $frontendEntry = __DIR__ . '/src/routes/main.php';
-           if (file_exists($frontendEntry)) {
-               require $frontendEntry;
-               
-               // Compile routes to cache if not already cached
-               if (!FrontendRoute::isRoutesLoaded()) {
-                   FrontendRoute::compileCache();
-               }
-           } else {
-               http_response_code(404);
-               echo 'Frontend entry (src/routes/main.php) not found.';
-               exit;
-           }
+    // Load route definitions
+    $frontendEntry = __DIR__ . '/src/routes/web.php';
+    if (file_exists($frontendEntry)) {
+        require $frontendEntry;
 
-           // Dispatch the route
-           FrontendRoute::dispatch($_SERVER['REQUEST_METHOD'] ?? 'GET', $_SERVER['REQUEST_URI'] ?? '/');
-           exit;
+        // Compile routes to cache if not already cached
+        if (!FrontendRoute::isRoutesLoaded()) {
+            FrontendRoute::compileCache();
+        }
+    } else {
+        http_response_code(404);
+        echo 'Frontend entry (src/routes/web.php) not found.';
+        palm_exit();
+    }
+
+    // Dispatch the route
+    FrontendRoute::dispatch($_SERVER['REQUEST_METHOD'] ?? 'GET', $_SERVER['REQUEST_URI'] ?? '/');
+    palm_exit();
 }
 
 try {
@@ -172,7 +278,7 @@ try {
             'conflicts' => $bootstrapState['conflicts'] ?? [],
             'note' => 'Please remove duplicate routes from either api.php or the conflicting module(s)'
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-        exit;
+        palm_exit();
     }
 
     // Load environment variables (if not already loaded by bootstrap)
@@ -201,7 +307,8 @@ try {
 
     // Pre-compute route path early (used later for direct routing)
     $basePath = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'])), '/');
-    $targetRoutePath = str_replace($basePath . "/api", '', $requestUri);
+    // Use $requestPath (without query string) instead of $requestUri
+    $targetRoutePath = str_replace($basePath . "/api", '', $requestPath);
     $targetRoutePath = rtrim($targetRoutePath, '/');
     if (empty($targetRoutePath)) {
         $targetRoutePath = '/';
@@ -250,7 +357,7 @@ try {
     header("X-XSS-Protection: 1; mode=block");
     header("Referrer-Policy: strict-origin-when-cross-origin");
     header("Permissions-Policy: geolocation=(), microphone=(), camera=()");
-    header("Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; base-uri 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:;");
+    header("Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; base-uri 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com https://cdnjs.cloudflare.com; frame-src 'self' https:;");
 
     // 🛡 HSTS (HTTP Strict Transport Security) - Only on HTTPS
     if ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
@@ -356,18 +463,21 @@ try {
 
     header('Content-Type: application/json; charset=UTF-8');
 
-    // -------- DIRECT ROUTE DISPATCH (No Loops) --------
-    // Route path already computed, go directly to route handler
-    // Router uses hash map for O(1) lookup - no loops for exact matches
+    // -------- FAST ROUTE DISPATCH (Optimized for Exact Matches) --------
+    // Route path pre-computed above, using optimized array-based lookup
+    // Router uses hash map (routeIndex) for O(1) exact match - no loops needed
+    // Dynamic routes only checked if exact match fails
     try {
-        // Get router instance and dispatch directly
+        // Get router instance for fast dispatch
         $router = Route::getRouter();
         if ($router !== null) {
-            // Direct route lookup - O(1) for exact matches, minimal overhead for dynamic
+            // Fast O(1) route lookup using array indexing
+            // Exact matches: Direct array access, no iteration
+            // Dynamic routes: Only checked if exact match fails
             $routeInfo = $router->findRoute($requestMethod, $targetRoutePath);
 
             if ($routeInfo !== null) {
-                // Execute route directly - no loops, immediate execution
+                // Execute route immediately - no loops, instant execution
                 $response = $router->executeRoute($routeInfo['route'], $routeInfo['params']);
             } else {
                 // Route not found - return 404
@@ -397,7 +507,7 @@ try {
             'line' => $e->getLine(),
             'trace' => ($_ENV['APP_DEBUG'] ?? 'false') === 'true' ? $e->getTraceAsString() : null
         ]);
-        exit;
+        palm_exit();
     }
 
     if ($response !== null) {

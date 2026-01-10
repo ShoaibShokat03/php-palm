@@ -1,9 +1,8 @@
 <?php
 
-// Auto-generated route cache
-// Generated: 2025-12-12 00:00:09
+// Auto-generated Palm route cache
+// Generated at: 2026-01-10 11:42:29
 // DO NOT EDIT MANUALLY
-// Note: Routes with closures are not cached
 
 return array (
   'GET' => 
@@ -15,38 +14,6 @@ return array (
       array (
         'title' => 'PHP Palm Frontend',
         'message' => 'Welcome to your PHP Palm powered frontend!',
-      ),
-       'layout' => NULL,
-    )),
-    '/about' => 
-    \Frontend\Palm\ViewHandler::__set_state(array(
-       'slug' => 'home.about',
-       'data' => 
-      array (
-        'title' => 'About PHP Palm',
-        'meta' => 
-        array (
-          'description' => 'Learn how PHP Palm powers fast, clean PHP frontends',
-        ),
-      ),
-       'layout' => NULL,
-    )),
-    '/contact' => 
-    \Frontend\Palm\ViewHandler::__set_state(array(
-       'slug' => 'home.contact',
-       'data' => 
-      array (
-        'title' => 'Contact',
-      ),
-       'layout' => NULL,
-    )),
-    '/demo' => 
-    \Frontend\Palm\ViewHandler::__set_state(array(
-       'slug' => 'home.demo',
-       'data' => 
-      array (
-        'title' => 'Demo Page',
-        'message' => 'Playground for Palm experiments',
       ),
        'layout' => NULL,
     )),

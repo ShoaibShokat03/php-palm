@@ -2,7 +2,7 @@
 
 namespace Frontend\Palm {
     require_once __DIR__ . '/ErrorHandler.php';
-    
+
     // Initialize error handler
     ErrorHandler::init();
 
@@ -78,17 +78,17 @@ namespace Frontend\Palm {
             foreach ($params as $key => $value) {
                 $path = str_replace('{' . $key . '}', (string)$value, $path);
             }
-            
+
             // Ensure path starts with /
             if ($path !== '' && !str_starts_with($path, '/')) {
                 $path = '/' . $path;
             }
-            
+
             // Get base URL from server
             $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
             $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
             $base = $protocol . '://' . $host;
-            
+
             return $base . ($path ?: '/');
         }
     }
@@ -118,7 +118,7 @@ namespace Frontend\Palm {
             $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
             $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
             $uri = $_SERVER['REQUEST_URI'] ?? '/';
-            
+
             return $protocol . '://' . $host . $uri;
         }
     }
@@ -164,18 +164,18 @@ namespace Frontend\Palm {
             $targetUrl = $url ?? current_url();
             $parsed = parse_url($targetUrl);
             $query = [];
-            
+
             if (isset($parsed['query'])) {
                 parse_str($parsed['query'], $query);
             }
-            
+
             $query = array_merge($query, $params);
-            
+
             $scheme = $parsed['scheme'] ?? 'http';
             $host = $parsed['host'] ?? 'localhost';
             $path = $parsed['path'] ?? '/';
             $queryString = http_build_query($query);
-            
+
             return $scheme . '://' . $host . $path . ($queryString ? '?' . $queryString : '');
         }
     }
@@ -189,20 +189,20 @@ namespace Frontend\Palm {
             $targetUrl = $url ?? current_url();
             $parsed = parse_url($targetUrl);
             $query = [];
-            
+
             if (isset($parsed['query'])) {
                 parse_str($parsed['query'], $query);
             }
-            
+
             foreach ($keys as $key) {
                 unset($query[$key]);
             }
-            
+
             $scheme = $parsed['scheme'] ?? 'http';
             $host = $parsed['host'] ?? 'localhost';
             $path = $parsed['path'] ?? '/';
             $queryString = http_build_query($query);
-            
+
             return $scheme . '://' . $host . $path . ($queryString ? '?' . $queryString : '');
         }
     }
@@ -220,100 +220,138 @@ namespace Frontend\Palm {
         {
             // Remove leading slash if present
             $path = ltrim($path, '/');
-            
+
             // Get base path from PALM_ROOT or default public directory
             $publicPath = defined('PALM_ROOT') ? PALM_ROOT . '/public' : __DIR__ . '/../../public';
             $fullPath = $publicPath . '/' . $path;
-            
+
             // Add version hash for cache busting
             if ($version && file_exists($fullPath)) {
                 $hash = substr(md5_file($fullPath), 0, 8);
                 return '/' . $path . '?v=' . $hash;
             }
-            
+
             return '/' . $path;
         }
     }
 
     if (!function_exists(__NAMESPACE__ . '\css')) {
         /**
-         * Generate CSS link tag(s)
-         * Usage: css('app.css') or css(['app.css', 'theme.css'])
+         * Generate CSS link tag(s) with progressive loading support
+         * Usage: 
+         *   css('app.css') - critical, loads immediately
+         *   css('theme.css', ['defer' => true]) - deferred, loads after page
+         *   css('vendor.css', ['preload' => true]) - preloaded, high priority
          */
         function css(string|array $files, array $attributes = []): string
         {
+            require_once __DIR__ . '/ProgressiveResourceLoader.php';
+
             $files = is_array($files) ? $files : [$files];
             $html = '';
-            
+            $defer = $attributes['defer'] ?? false;
+            $preload = $attributes['preload'] ?? false;
+
+            // Remove progressive loading flags from attributes
+            unset($attributes['defer'], $attributes['preload']);
+
             foreach ($files as $file) {
                 // Ensure .css extension
                 if (!str_ends_with($file, '.css')) {
                     $file .= '.css';
                 }
-                
+
                 // Prepend /css/ if no directory in path
                 if (!str_contains($file, '/')) {
                     $file = 'css/' . $file;
                 }
-                
+
                 $url = asset($file);
-                
-                $attrs = array_merge([
-                    'rel' => 'stylesheet',
-                    'href' => $url,
-                ], $attributes);
-                
-                $attrString = '';
-                foreach ($attrs as $key => $value) {
-                    $attrString .= ' ' . htmlspecialchars($key) . '="' . htmlspecialchars($value) . '"';
+
+                if ($preload) {
+                    // Preload for high priority
+                    ProgressiveResourceLoader::preload($url, 'style', 'text/css', $attributes);
+                } elseif ($defer) {
+                    // Defer for lazy loading
+                    ProgressiveResourceLoader::defer($url, 'stylesheet', $attributes);
+                } else {
+                    // Critical - load immediately
+                    $attrs = array_merge([
+                        'rel' => 'stylesheet',
+                        'href' => $url,
+                    ], $attributes);
+
+                    $attrString = '';
+                    foreach ($attrs as $key => $value) {
+                        $attrString .= ' ' . htmlspecialchars($key) . '="' . htmlspecialchars($value) . '"';
+                    }
+
+                    $html .= '<link' . $attrString . '>' . "\n    ";
                 }
-                
-                $html .= '<link' . $attrString . '>' . "\n    ";
             }
-            
+
             return rtrim($html);
         }
     }
 
     if (!function_exists(__NAMESPACE__ . '\js')) {
         /**
-         * Generate JavaScript script tag(s)
-         * Usage: js('app.js') or js(['app.js', 'vendor.js'])
+         * Generate JavaScript script tag(s) with progressive loading support
+         * Usage:
+         *   js('app.js') - critical, loads immediately
+         *   js('vendor.js', ['defer' => true]) - deferred, loads after page
+         *   js('analytics.js', ['async' => true, 'defer' => true]) - async + deferred
          */
         function js(string|array $files, array $attributes = []): string
         {
+            require_once __DIR__ . '/ProgressiveResourceLoader.php';
+
             $files = is_array($files) ? $files : [$files];
             $html = '';
-            
+            $defer = $attributes['defer'] ?? false;
+            $preload = $attributes['preload'] ?? false;
+
+            // Remove progressive loading flags from attributes
+            unset($attributes['defer'], $attributes['preload']);
+
             foreach ($files as $file) {
                 // Ensure .js extension
                 if (!str_ends_with($file, '.js')) {
                     $file .= '.js';
                 }
-                
+
                 // Prepend /js/ if no directory in path
                 if (!str_contains($file, '/')) {
                     $file = 'js/' . $file;
                 }
-                
+
                 $url = asset($file);
-                
-                $attrs = array_merge([
-                    'src' => $url,
-                ], $attributes);
-                
-                $attrString = '';
-                foreach ($attrs as $key => $value) {
-                    if (is_bool($value) && $value) {
-                        $attrString .= ' ' . htmlspecialchars($key);
-                    } elseif (!is_bool($value)) {
-                        $attrString .= ' ' . htmlspecialchars($key) . '="' . htmlspecialchars($value) . '"';
+
+                if ($preload) {
+                    // Preload for high priority
+                    ProgressiveResourceLoader::preload($url, 'script', 'application/javascript', $attributes);
+                } elseif ($defer) {
+                    // Defer for lazy loading
+                    ProgressiveResourceLoader::defer($url, 'script', $attributes);
+                } else {
+                    // Critical - load immediately (but can still use async/defer)
+                    $attrs = array_merge([
+                        'src' => $url,
+                    ], $attributes);
+
+                    $attrString = '';
+                    foreach ($attrs as $key => $value) {
+                        if (is_bool($value) && $value) {
+                            $attrString .= ' ' . htmlspecialchars($key);
+                        } elseif (!is_bool($value)) {
+                            $attrString .= ' ' . htmlspecialchars($key) . '="' . htmlspecialchars($value) . '"';
+                        }
                     }
+
+                    $html .= '<script' . $attrString . '></script>' . "\n    ";
                 }
-                
-                $html .= '<script' . $attrString . '></script>' . "\n    ";
             }
-            
+
             return rtrim($html);
         }
     }
@@ -328,23 +366,29 @@ namespace Frontend\Palm {
             // Extract lazy loading option
             $lazy = $attributes['lazy'] ?? false;
             unset($attributes['lazy']);
-            
+
             // Prepend /images/ if no directory in path
             if (!str_contains($path, '/')) {
                 $path = 'images/' . $path;
             }
-            
+
             $url = asset($path);
-            
+
             $attrs = array_merge([
                 'src' => $url,
                 'alt' => $attributes['alt'] ?? '',
             ], $attributes);
-            
+
             if ($lazy) {
-                $attrs['loading'] = 'lazy';
+                // Use data-src for true lazy loading (loads when visible)
+                $attrs['data-src'] = $attrs['src'];
+                unset($attrs['src']);
+                // Add placeholder or low-quality placeholder
+                if (!isset($attrs['src'])) {
+                    $attrs['src'] = 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 1 1\'%3E%3C/svg%3E';
+                }
             }
-            
+
             $attrString = '';
             foreach ($attrs as $key => $value) {
                 if ($key === 'src' || $key === 'alt' || is_numeric($value)) {
@@ -355,7 +399,7 @@ namespace Frontend\Palm {
                     $attrString .= ' ' . htmlspecialchars($key);
                 }
             }
-            
+
             return '<img' . $attrString . '>';
         }
     }
@@ -373,9 +417,9 @@ namespace Frontend\Palm {
             } elseif (!str_starts_with($path, '/')) {
                 $path = '/' . $path;
             }
-            
+
             $url = asset(ltrim($path, '/'));
-            
+
             return '<link rel="icon" type="image/x-icon" href="' . htmlspecialchars($url) . '">';
         }
     }
@@ -394,16 +438,16 @@ namespace Frontend\Palm {
             if (class_exists('\App\Core\Security\CSRF')) {
                 return \App\Core\Security\CSRF::token();
             }
-            
+
             // Fallback to session-based CSRF
             if (session_status() === PHP_SESSION_NONE) {
                 session_start();
             }
-            
+
             if (empty($_SESSION['csrf_token'])) {
                 $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
             }
-            
+
             return $_SESSION['csrf_token'];
         }
     }
@@ -439,19 +483,19 @@ namespace Frontend\Palm {
                 'method' => $method === 'GET' ? 'GET' : 'POST',
                 'action' => $action ?: current_url(),
             ], $attributes);
-            
+
             $attrString = '';
             foreach ($attrs as $key => $value) {
                 $attrString .= ' ' . htmlspecialchars($key) . '="' . htmlspecialchars($value) . '"';
             }
-            
+
             $html = '<form' . $attrString . '>';
-            
+
             // Add CSRF token for non-GET methods
             if ($method !== 'GET') {
                 $html .= "\n    " . csrf_field();
             }
-            
+
             return $html;
         }
     }
@@ -488,14 +532,14 @@ namespace Frontend\Palm {
                 'name' => $name,
                 'value' => $value,
             ], $attributes);
-            
+
             $attrString = '';
             foreach ($attrs as $key => $val) {
                 if (!is_null($val) && $val !== '') {
                     $attrString .= ' ' . htmlspecialchars($key) . '="' . htmlspecialchars($val) . '"';
                 }
             }
-            
+
             return '<input' . $attrString . '>';
         }
     }
@@ -528,14 +572,14 @@ namespace Frontend\Palm {
             $attrs = array_merge([
                 'name' => $name,
             ], $attributes);
-            
+
             $attrString = '';
             foreach ($attrs as $key => $val) {
                 if ($key !== 'value') {
                     $attrString .= ' ' . htmlspecialchars($key) . '="' . htmlspecialchars($val) . '"';
                 }
             }
-            
+
             return '<textarea' . $attrString . '>' . $value . '</textarea>';
         }
     }
@@ -547,19 +591,19 @@ namespace Frontend\Palm {
             $attrs = array_merge([
                 'name' => $name,
             ], $attributes);
-            
+
             $attrString = '';
             foreach ($attrs as $key => $val) {
                 $attrString .= ' ' . htmlspecialchars($key) . '="' . htmlspecialchars($val) . '"';
             }
-            
+
             $html = '<select' . $attrString . '>';
             foreach ($options as $value => $label) {
                 $isSelected = ($value == $selected) ? ' selected' : '';
                 $html .= '<option value="' . htmlspecialchars($value) . '"' . $isSelected . '>' . htmlspecialchars($label) . '</option>';
             }
             $html .= '</select>';
-            
+
             return $html;
         }
     }
@@ -573,11 +617,11 @@ namespace Frontend\Palm {
                 'name' => $name,
                 'value' => $value,
             ], $attributes);
-            
+
             if ($checked) {
                 $attrs['checked'] = 'checked';
             }
-            
+
             $attrString = '';
             foreach ($attrs as $key => $val) {
                 $attrString .= ' ' . htmlspecialchars($key);
@@ -585,7 +629,7 @@ namespace Frontend\Palm {
                     $attrString .= '="' . htmlspecialchars($val) . '"';
                 }
             }
-            
+
             return '<input' . $attrString . '>';
         }
     }
@@ -599,11 +643,11 @@ namespace Frontend\Palm {
                 'name' => $name,
                 'value' => $value,
             ], $attributes);
-            
+
             if ($checked) {
                 $attrs['checked'] = 'checked';
             }
-            
+
             $attrString = '';
             foreach ($attrs as $key => $val) {
                 $attrString .= ' ' . htmlspecialchars($key);
@@ -611,7 +655,7 @@ namespace Frontend\Palm {
                     $attrString .= '="' . htmlspecialchars($val) . '"';
                 }
             }
-            
+
             return '<input' . $attrString . '>';
         }
     }
@@ -629,12 +673,12 @@ namespace Frontend\Palm {
             $attrs = array_merge([
                 'href' => $url,
             ], $attributes);
-            
+
             $attrString = '';
             foreach ($attrs as $key => $value) {
                 $attrString .= ' ' . htmlspecialchars($key) . '="' . htmlspecialchars($value) . '"';
             }
-            
+
             return '<a' . $attrString . '>' . htmlspecialchars($text) . '</a>';
         }
     }
@@ -671,14 +715,14 @@ namespace Frontend\Palm {
         function component(string $name, array $props = [], array $slots = []): string
         {
             require_once __DIR__ . '/ComponentRenderer.php';
-            
+
             // Initialize built-in components on first use
             static $initialized = false;
             if (!$initialized) {
                 ComponentRenderer::init();
                 $initialized = true;
             }
-            
+
             return ComponentRenderer::render($name, $props, $slots);
         }
     }
@@ -730,10 +774,10 @@ namespace Frontend\Palm {
         function layout(string $name, array $data = []): void
         {
             extract($data);
-            $layoutPath = defined('PALM_ROOT') 
+            $layoutPath = defined('PALM_ROOT')
                 ? PALM_ROOT . '/src/layouts/' . $name . '.php'
                 : __DIR__ . '/../../src/layouts/' . $name . '.php';
-            
+
             if (file_exists($layoutPath)) {
                 require $layoutPath;
             } else {
@@ -752,13 +796,13 @@ namespace Frontend\Palm {
             $partialPath = defined('PALM_ROOT')
                 ? PALM_ROOT . '/src/views/partials/' . $name . '.php'
                 : __DIR__ . '/../../src/views/partials/' . $name . '.php';
-            
+
             if (file_exists($partialPath)) {
                 ob_start();
                 require $partialPath;
                 return ob_get_clean();
             }
-            
+
             return ''; // Return empty if partial not found
         }
     }
@@ -774,42 +818,42 @@ namespace Frontend\Palm {
         function seo_meta(array $data): string
         {
             $html = '';
-            
+
             // Title
             if (isset($data['title'])) {
                 $html .= '<title>' . htmlspecialchars($data['title']) . '</title>' . "\n    ";
             }
-            
+
             // Description
             if (isset($data['description'])) {
                 $html .= meta('description', $data['description']) . "\n    ";
             }
-            
+
             // Keywords
             if (isset($data['keywords'])) {
                 $keywords = is_array($data['keywords']) ? implode(', ', $data['keywords']) : $data['keywords'];
                 $html .= meta('keywords', $keywords) . "\n    ";
             }
-            
+
             // Open Graph
             if (isset($data['og'])) {
                 foreach ($data['og'] as $key => $value) {
                     $html .= '<meta property="og:' . htmlspecialchars($key) . '" content="' . htmlspecialchars($value) . '">' . "\n    ";
                 }
             }
-            
+
             // Twitter Card
             if (isset($data['twitter'])) {
                 foreach ($data['twitter'] as $key => $value) {
                     $html .= '<meta name="twitter:' . htmlspecialchars($key) . '" content="' . htmlspecialchars($value) . '">' . "\n    ";
                 }
             }
-            
+
             // Canonical URL
             if (isset($data['canonical'])) {
                 $html .= '<link rel="canonical" href="' . htmlspecialchars($data['canonical']) . '">' . "\n    ";
             }
-            
+
             return rtrim($html);
         }
     }
@@ -824,7 +868,7 @@ namespace Frontend\Palm {
                 '@context' => 'https://schema.org',
                 '@type' => $type,
             ] + $data;
-            
+
             return '<script type="application/ld+json">' . json_encode($schema, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . '</script>';
         }
     }
@@ -1136,20 +1180,20 @@ namespace Frontend\Palm {
         function flash(?string $key = null, ?string $message = null, string $type = 'info'): mixed
         {
             require_once __DIR__ . '/FlashMessage.php';
-            
+
             if ($key === null) {
                 // Get all flash messages
                 return $_SESSION['_flash'] ?? [];
             }
-            
+
             if ($message === null) {
                 // Get flash message
                 return FlashMessage::get($key);
             }
-            
+
             // Set flash message
             FlashMessage::set($key, $message, $type);
-                return null;
+            return null;
         }
     }
 
@@ -1346,7 +1390,7 @@ namespace Frontend\Palm {
         function csp(string $preset = 'default'): string
         {
             require_once __DIR__ . '/CspGenerator.php';
-            return match($preset) {
+            return match ($preset) {
                 'strict' => CspGenerator::strict(),
                 'development' => CspGenerator::development(),
                 default => CspGenerator::default(),
@@ -2088,6 +2132,98 @@ namespace {
         function google_auth_logout(): void
         {
             \Frontend\Palm\GoogleAuth::logout();
+        }
+    }
+
+    if (!function_exists(__NAMESPACE__ . '\upload_file')) {
+        /**
+         * Easy file upload helper
+         * 
+         * @param string $fieldName Form field name
+         * @param array $options Configuration options
+         * @return array Result of the upload
+         */
+        function upload_file(string $fieldName, array $options = []): array
+        {
+            require_once dirname(__DIR__) . '/Core/Security/FileUpload.php';
+            require_once dirname(__DIR__) . '/Core/Events/Event.php';
+
+            // Default path: root /uploads
+            $root = defined('PALM_ROOT') ? PALM_ROOT : dirname(__DIR__, 2);
+            $uploadPath = $options['path'] ?? ($root . '/uploads');
+
+            if (!is_dir($uploadPath)) {
+                mkdir($uploadPath, 0755, true);
+            }
+
+            $uploader = new \App\Core\Security\FileUpload($uploadPath);
+
+            if (isset($options['allowed_types'])) {
+                $uploader->setAllowedMimeTypes($options['allowed_types']);
+            }
+            if (isset($options['allowed_extensions'])) {
+                $uploader->setAllowedExtensions($options['allowed_extensions']);
+            }
+            if (isset($options['max_size'])) {
+                $uploader->setMaxFileSize($options['max_size']);
+            }
+
+            $result = $uploader->upload($fieldName);
+
+            if ($result['success']) {
+                \App\Core\Events\Event::fire('file.uploaded', $result['file']);
+            }
+
+            return $result;
+        }
+    }
+
+    if (!function_exists(__NAMESPACE__ . '\event')) {
+        /**
+         * Dispatch an event
+         */
+        function event(string $name, $payload = null): array
+        {
+            require_once dirname(__DIR__) . '/Core/Events/Event.php';
+            return \App\Core\Events\Event::fire($name, $payload);
+        }
+    }
+
+    if (!function_exists(__NAMESPACE__ . '\on')) {
+        /**
+         * Listen to an event
+         */
+        function on(string $event, callable $listener, int $priority = 0): void
+        {
+            require_once dirname(__DIR__) . '/Core/Events/Event.php';
+            \App\Core\Events\Event::listen($event, $listener, $priority);
+        }
+    }
+
+    if (!function_exists(__NAMESPACE__ . '\app')) {
+        /**
+         * Get the container instance or resolve a class
+         * 
+         * @param string|null $abstract
+         * @return mixed
+         */
+        function app(?string $abstract = null)
+        {
+            $container = \App\Core\Container::getInstance();
+            if ($abstract === null) {
+                return $container;
+            }
+            return $container->make($abstract);
+        }
+    }
+
+    if (!function_exists(__NAMESPACE__ . '\resolve')) {
+        /**
+         * Resolve a class from the container
+         */
+        function resolve(string $abstract)
+        {
+            return \App\Core\Container::getInstance()->make($abstract);
         }
     }
 }

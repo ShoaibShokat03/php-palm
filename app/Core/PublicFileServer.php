@@ -12,7 +12,7 @@ class PublicFileServer
     protected string $publicPath;
     protected string $baseUrl;
 
-    public function __construct(string $publicPath = null)
+    public function __construct(?string $publicPath = null)
     {
         // Use absolute path to ensure we can find the public folder
         if ($publicPath === null) {
@@ -184,23 +184,60 @@ class PublicFileServer
 
         // Get MIME type
         $mimeType = $this->getMimeType($realFilePath);
+        $fileSize = filesize($realFilePath);
+        $lastModified = filemtime($realFilePath);
+        
+        // Generate ETag for better caching
+        $etag = md5($realFilePath . $lastModified . $fileSize);
         
         // Set headers
         header('Content-Type: ' . $mimeType);
-        header('Content-Length: ' . filesize($realFilePath));
-        header('Cache-Control: public, max-age=31536000'); // 1 year cache
-        header('Last-Modified: ' . gmdate('D, d M Y H:i:s', filemtime($realFilePath)) . ' GMT');
+        header('Content-Length: ' . $fileSize);
+        header('Cache-Control: public, max-age=31536000, immutable'); // 1 year cache, immutable
+        header('Last-Modified: ' . gmdate('D, d M Y H:i:s', $lastModified) . ' GMT');
+        header('ETag: "' . $etag . '"');
+        header('Vary: Accept-Encoding');
         
         // Handle If-Modified-Since for caching
         if (isset($_SERVER['HTTP_IF_MODIFIED_SINCE'])) {
             $ifModifiedSince = strtotime($_SERVER['HTTP_IF_MODIFIED_SINCE']);
-            if ($ifModifiedSince >= filemtime($realFilePath)) {
+            if ($ifModifiedSince >= $lastModified) {
                 http_response_code(304);
                 exit;
             }
         }
+        
+        // Handle If-None-Match (ETag) for caching
+        if (isset($_SERVER['HTTP_IF_NONE_MATCH'])) {
+            $clientEtag = trim($_SERVER['HTTP_IF_NONE_MATCH'], '"');
+            if ($clientEtag === $etag) {
+                http_response_code(304);
+                exit;
+            }
+        }
+        
+        // Enable compression for text-based files
+        $compressibleTypes = ['text/html', 'text/css', 'application/javascript', 'text/javascript', 
+                             'application/json', 'text/xml', 'application/xml', 'image/svg+xml'];
+        $shouldCompress = in_array($mimeType, $compressibleTypes) && $fileSize > 1024;
+        
+        if ($shouldCompress) {
+            $acceptEncoding = $_SERVER['HTTP_ACCEPT_ENCODING'] ?? '';
+            
+            // Try Gzip compression
+            if (strpos($acceptEncoding, 'gzip') !== false && function_exists('gzencode')) {
+                $content = file_get_contents($realFilePath);
+                $compressed = gzencode($content, 6);
+                if ($compressed !== false && strlen($compressed) < $fileSize) {
+                    header('Content-Encoding: gzip');
+                    header('Content-Length: ' . strlen($compressed));
+                    echo $compressed;
+                    return true;
+                }
+            }
+        }
 
-        // Output file
+        // Output file (no compression or compression failed)
         readfile($realFilePath);
         return true;
     }
