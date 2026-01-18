@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Service Generator (Improved)
  * Creates a service using ActiveRecord methods
@@ -81,19 +82,60 @@ namespace App\\Modules\\{$moduleName};
 
 use App\\Core\\Service as BaseService;
 use App\\Modules\\{$moduleName}\\Model;
+use App\\Core\\App;
 
 class Service extends BaseService
 {
     /**
-     * Get all {$serviceName} records
-     * Uses ActiveRecord: Model::all()
+     * Get all {$moduleName} records with automatic pagination and filtering
+     * 
+     * Query Parameters (auto-read from \$_GET):
+     * - page: Current page number (default: 1)
+     * - per_page: Items per page (default: 10, max: 100)
+     * - sort: Column to sort by (default: id)
+     * - order: Sort order (asc/desc, default: desc)
+     * - search: Search term for searchable columns
+     * - status, type: Filter by these columns
      */
     public function getAll(): array
     {
-        \$records = Model::all();
+        \$request = App::request();
+
+        // Get pagination params
+        \$page = max(1, (int)(\$request->get('page') ?? 1));
+        \$perPage = min(100, max(1, (int)(\$request->get('per_page') ?? 10)));
+        \$search = \$request->get('search') ?? null;
+
+        // Build query with fluent API
+        \$query = Model::where()
+            ->search(\$search, ['name', 'title', 'description'])  // Customize searchable columns
+            ->autoFilter(['status', 'type', 'active'])             // Auto-filter from request
+            ->sort();                                               // Auto-read sort/order
+
+        // Get total count before pagination
+        \$total = \$query->count();
+
+        // Apply pagination and get records
+        \$records = \$query
+            ->paginate(\$page, \$perPage)
+            ->all();
+
+        // Calculate pagination metadata
+        \$lastPage = max(1, (int)ceil(\$total / \$perPage));
+        \$from = \$total > 0 ? ((\$page - 1) * \$perPage) + 1 : null;
+        \$to = \$total > 0 ? min(\$total, \$page * \$perPage) : null;
+
         return [
-            'total' => \$records->count(),
-            'items' => \$records
+            'meta' => [
+                'total' => \$total,
+                'page' => \$page,
+                'per_page' => \$perPage,
+                'last_page' => \$lastPage,
+                'from' => \$from,
+                'to' => \$to,
+                'has_more' => \$page < \$lastPage,
+            ],
+            'data' => \$records
         ];
     }
 

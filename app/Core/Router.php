@@ -7,7 +7,7 @@ class Router
     protected array $routes = [];
     protected array $namedRoutes = []; // Named routes for URL generation
     protected static string $currentSource = 'api.php';
-    
+
     // Optimized route lookup: method => [exact_path => route, ...]
     protected array $routeIndex = [];
     // Dynamic routes (with parameters) grouped by method
@@ -33,13 +33,13 @@ class Router
             'raw'     => $path,
             'source'  => $source ?? self::$currentSource
         ];
-        
+
         $this->routes[] = $route;
-        
+
         // Build optimized index for O(1) exact match lookup
         $normalizedPath = $this->normalizePath($path);
         $hasParams = strpos($path, '{') !== false;
-        
+
         if (!$hasParams) {
             // Exact match route - stored in array for instant O(1) lookup
             // No loops needed during route matching
@@ -55,13 +55,13 @@ class Router
             }
             $this->dynamicRoutes[$method][] = $route;
         }
-        
+
         // Store named route for URL generation
         if ($name !== null) {
             $this->namedRoutes[$name] = $route;
         }
     }
-    
+
     /**
      * Normalize path for indexing (remove trailing slash, lowercase)
      */
@@ -128,7 +128,7 @@ class Router
         $targetRoute = str_replace($basePath . "/api", '', $uri);
         return $this->normalizePath($targetRoute);
     }
-    
+
     /**
      * Fast route lookup with O(1) exact match - optimized for speed
      * Uses array indexing for exact matches (no loops)
@@ -141,7 +141,7 @@ class Router
     public function findRoute(string $method, string $targetRoute): ?array
     {
         $method = strtoupper($method);
-        
+
         // Fast path: Direct O(1) array lookup for exact matches
         // No loops, no iteration - instant hash map access
         if (isset($this->routeIndex[$method]) && isset($this->routeIndex[$method][$targetRoute])) {
@@ -150,7 +150,7 @@ class Router
                 'params' => []
             ];
         }
-        
+
         // Fallback: Try dynamic routes (only if no exact match found)
         // This is the only place we use a loop, and only for parameterized routes
         if (isset($this->dynamicRoutes[$method])) {
@@ -164,10 +164,10 @@ class Router
                 }
             }
         }
-        
+
         return null;
     }
-    
+
     /**
      * Fast route dispatch - optimized for exact matches
      * Uses O(1) array lookup for exact routes, no loops
@@ -181,10 +181,10 @@ class Router
         try {
             // Pre-compute route path once (normalized)
             $targetRoute = $this->prepareRoutePath($uri);
-            
+
             // Fast O(1) route lookup - direct array access, no loops for exact matches
             $routeInfo = $this->findRoute($method, $targetRoute);
-            
+
             if ($routeInfo !== null) {
                 // Execute route immediately - no iteration needed
                 return $this->executeRoute($routeInfo['route'], $routeInfo['params']);
@@ -210,7 +210,7 @@ class Router
             ];
         }
     }
-    
+
     /**
      * Execute route handler (public for direct access)
      */
@@ -218,7 +218,7 @@ class Router
     {
         try {
             $handler = $route['handler'];
-            
+
             // Handle array callables like [ClassName::class, 'method']
             if (is_array($handler) && count($handler) === 2 && is_string($handler[0])) {
                 // Instantiate the class and create a callable with the instance
@@ -227,19 +227,19 @@ class Router
                 $instance = new $className();
                 $handler = [$instance, $methodName];
             }
-            
+
             $result = call_user_func_array($handler, $params);
-            
+
             // Ensure result is an array
             if (!is_array($result)) {
                 return ['status' => 'success', 'data' => $result];
             }
-            
+
             return $result;
         } catch (\Throwable $e) {
             // Log error details for debugging
             error_log('Route handler error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
-            
+
             http_response_code(500);
             return [
                 'status' => 'error',
@@ -259,18 +259,18 @@ class Router
     {
         $simpleRoutes = [];
         $moduleRoutes = [];
-        
+
         foreach ($this->routes as $route) {
             if ($route['method'] !== strtoupper($method)) {
                 continue;
             }
-            
+
             $source = $route['source'] ?? 'api.php';
-            
+
             // Check if it's a simple route (from api.php)
             if ($source === 'api.php') {
                 $simpleRoutes[] = $route['raw'];
-            } 
+            }
             // Check if it's a module route (source format: "module:ModuleName")
             elseif (strpos($source, 'module:') === 0) {
                 $moduleName = substr($source, 7); // Remove "module:" prefix
@@ -287,18 +287,18 @@ class Router
                 $moduleRoutes[$source][] = $route['raw'];
             }
         }
-        
+
         // Build structured response
         $result = [];
-        
+
         if (!empty($simpleRoutes)) {
             $result['simple_routes'] = $simpleRoutes;
         }
-        
+
         if (!empty($moduleRoutes)) {
             $result['module_routes'] = $moduleRoutes;
         }
-        
+
         return $result;
     }
 
@@ -310,10 +310,14 @@ class Router
         if (empty($path)) {
             $path = '/';
         }
-        
-        // Convert route like /user/{id} to regex
-        $pattern = preg_replace('#\{([a-zA-Z_][a-zA-Z0-9_]*)\}#', '(?P<\1>[^/]+)', $path);
+
+        // Escape the path for regex using # delimiter
+        $pattern = preg_quote($path, '#');
+
+        // Convert route params like \{id\} (escaped by preg_quote) to named capture groups
+        // Matches \{identifier\} -> (?P<identifier>[^/]+)
+        $pattern = preg_replace('#\\\\\{([a-zA-Z_][a-zA-Z0-9_]*)\\\\\}#', '(?P<\1>[^/]+)', $pattern);
+
         return '#^' . $pattern . '$#';
     }
 }
-

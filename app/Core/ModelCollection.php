@@ -33,6 +33,17 @@ class ModelCollection implements IteratorAggregate, Countable, JsonSerializable,
     }
 
     /**
+     * Return the last item in the collection.
+     */
+    public function last()
+    {
+        if (empty($this->items)) {
+            return null;
+        }
+        return $this->items[count($this->items) - 1];
+    }
+
+    /**
      * Number of items.
      */
     public function count(): int
@@ -125,4 +136,3 @@ class ModelCollection implements IteratorAggregate, Countable, JsonSerializable,
         return $this->items;
     }
 }
-

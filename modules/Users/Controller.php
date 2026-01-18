@@ -4,6 +4,7 @@ namespace App\Modules\Users;
 
 use App\Core\Controller as BaseController;
 use App\Modules\Users\Service;
+use App\Core\App;
 
 class Controller extends BaseController
 {
@@ -14,72 +15,38 @@ class Controller extends BaseController
         $this->service = new Service();
     }
 
-    /**
-     * Get all Users records
-     */
     public function index(): array
     {
-        $data = $this->service->getAll();
-        return $this->success($data, 'Users records retrieved successfully');
+        return $this->success($this->service->getAll());
     }
 
-    /**
-     * Get Users by ID
-     */
     public function show(string $id): array
     {
         $data = $this->service->getById((int)$id);
-        
-        if ($data) {
-            return $this->success($data, 'Users retrieved successfully');
-        }
-
-        return $this->error('Users not found', [], 404);
+        return $data ? $this->success($data) : $this->error('Not found', [], 404);
     }
 
-    /**
-     * Create new Users
-     */
     public function store(): array
     {
-        $requestData = $this->getRequestData();
-        
-        $result = $this->service->create($requestData);
-        
-        if ($result['success']) {
-            return $this->success($result['data'], 'Users created successfully', 201);
-        }
-
-        return $this->error($result['message'], $result['errors'] ?? [], 400);
+        $result = $this->service->create(App::request()->all());
+        return $result['success'] 
+            ? $this->success($result['data'], 'Created', 201)
+            : $this->error($result['message'], [], 400);
     }
 
-    /**
-     * Update Users
-     */
     public function update(string $id): array
     {
-        $requestData = $this->getRequestData();
-        
-        $result = $this->service->update((int)$id, $requestData);
-        
-        if ($result['success']) {
-            return $this->success($result['data'], 'Users updated successfully');
-        }
-
-        return $this->error($result['message'], $result['errors'] ?? [], 400);
+        $result = $this->service->update((int)$id, App::request()->all());
+        return $result['success']
+            ? $this->success($result['data'], 'Updated')
+            : $this->error($result['message'], [], 400);
     }
 
-    /**
-     * Delete Users
-     */
     public function destroy(string $id): array
     {
         $result = $this->service->delete((int)$id);
-        
-        if ($result['success']) {
-            return $this->success([], 'Users deleted successfully');
-        }
-
-        return $this->error($result['message'], [], 404);
+        return $result['success']
+            ? $this->success([], 'Deleted')
+            : $this->error($result['message'], [], 404);
     }
 }

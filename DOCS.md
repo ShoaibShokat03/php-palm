@@ -547,7 +547,11 @@ palm make:component Button
 
 **Usage:**
 ```php
-<?= Component::render('Button', ['text' => 'Click Me', 'type' => 'primary']) ?>
+<?php 
+use Frontend\Palm\Render;
+
+Render::component('Button', ['text' => 'Click Me', 'type' => 'primary']); 
+?>
 ```
 
 ### SEO & Meta Tags

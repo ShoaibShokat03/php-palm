@@ -16,8 +16,9 @@ Complete guide to calling routes internally without HTTP requests. This feature 
 4. [Advanced Usage](#advanced-usage)
 5. [Use Cases](#use-cases)
 6. [Best Practices](#best-practices)
-7. [API Reference](#api-reference)
-8. [Examples](#examples)
+7. [Avoiding Infinite Loops](#avoiding-infinite-loops)
+8. [API Reference](#api-reference)
+9. [Examples](#examples)
 
 ---
 
@@ -440,6 +441,46 @@ $user = UsersModule::post('/users', $data); // Uses full route logic
 // ❌ Avoid: When you just need data (use models directly)
 $users = UserModel::all(); // Direct model access is better
 ```
+
+---
+
+## Avoiding Infinite Loops
+
+### The Recursion Problem
+
+Internal routes work by simulating a request through the Router. If you call `Module::method()` from within the same file that handles that route (e.g., calling `UserModule::post('/users')` inside `web.php`'s `/users` handler), you will create an **infinite loop**.
+
+**❌ DO NOT DO THIS (Inside `web.php`):**
+
+```php
+Route::post('/users', function() {
+    // This calls Route::post('/users') again! Infinite recursion!
+    $result = UserModule::post('/users', $_POST);
+});
+```
+
+### The Solution: Use Service Directly
+
+When you are already inside the route handler, skip the router overhead and usage conflicts by instantiating the Service directly.
+
+**✅ CORRECT APPROACH:**
+
+```php
+use App\Modules\Users\Service as UserService;
+
+Route::post('/users', function() {
+    $service = new UserService();
+    
+    // Call service method directly
+    $result = $service->create($_POST);
+    
+    if ($result['success']) {
+        // ...
+    }
+});
+```
+
+Use `Module::method()` only when calling routes from **outside** the route definition (e.g., from other modules, jobs, or tests).
 
 ---
 

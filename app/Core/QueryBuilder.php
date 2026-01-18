@@ -256,6 +256,114 @@ class QueryBuilder
     }
 
     /**
+     * Set items per page (alias for limit with validation)
+     * 
+     * Usage: ->perPage(10) or ->perPage(25)
+     * Max: 100 items per page (configurable)
+     */
+    public function perPage(int $perPage, int $max = 100): self
+    {
+        $this->limit = min($max, max(1, $perPage));
+        $this->sqlDirty = true;
+        return $this;
+    }
+
+    /**
+     * Set current page number (auto-calculates offset)
+     * Must call perPage() first or pass perPage as second param
+     * 
+     * Usage: ->perPage(10)->page(2)  // Gets items 11-20
+     *        ->page(2, 10)           // Same as above
+     */
+    public function page(int $page, ?int $perPage = null): self
+    {
+        $page = max(1, $page);
+
+        if ($perPage !== null) {
+            $this->perPage($perPage);
+        }
+
+        // Calculate offset from page number
+        $limit = $this->limit ?? 10;
+        $this->offset = ($page - 1) * $limit;
+        $this->sqlDirty = true;
+        return $this;
+    }
+
+    /**
+     * Full pagination setup in one call
+     * 
+     * Usage: ->paginate(page: 2, perPage: 10)
+     *        ->paginate()  // Uses $_GET['page'] and $_GET['per_page']
+     */
+    public function paginate(?int $page = null, ?int $perPage = null): self
+    {
+        // Auto-read from request if not provided
+        $page = $page ?? max(1, (int)($_GET['page'] ?? 1));
+        $perPage = $perPage ?? min(100, max(1, (int)($_GET['per_page'] ?? 10)));
+
+        return $this->perPage($perPage)->page($page);
+    }
+
+    /**
+     * Auto-apply filters from $_GET parameters
+     * Only applies filters for columns that exist in the allowed list
+     * 
+     * Usage: 
+     *   ->autoFilter()                              // Auto-detect from Model $filterable
+     *   ->autoFilter(['status', 'type', 'role'])   // Specify allowed columns
+     *   ->autoFilter(['status' => 'active'])        // Direct filter values
+     */
+    public function autoFilter(array $allowedOrValues = []): self
+    {
+        // If associative array, apply as direct filters
+        if (!empty($allowedOrValues) && array_keys($allowedOrValues) !== range(0, count($allowedOrValues) - 1)) {
+            foreach ($allowedOrValues as $column => $value) {
+                if ($value !== '' && $value !== null) {
+                    $this->where($column, '=', $value);
+                }
+            }
+            return $this;
+        }
+
+        // Get filterable columns (from param or model property)
+        $filterableColumns = !empty($allowedOrValues)
+            ? $allowedOrValues
+            : (property_exists($this->model, 'filterable') ? $this->model->filterable : []);
+
+        // Auto-apply filters from $_GET for each allowed column
+        foreach ($filterableColumns as $column) {
+            if (isset($_GET[$column]) && $_GET[$column] !== '') {
+                $value = $_GET[$column];
+
+                // Support operators in value: ">10", "<=5", "!=draft"
+                if (preg_match('/^(>=|<=|!=|<>|>|<)(.+)$/', $value, $matches)) {
+                    $this->where($column, $matches[1], $matches[2]);
+                } else {
+                    $this->where($column, '=', $value);
+                }
+            }
+        }
+
+        return $this;
+    }
+
+    /**
+     * Apply sorting from request or defaults
+     * 
+     * Usage:
+     *   ->sort()                    // Uses $_GET['sort'] and $_GET['order']
+     *   ->sort('created_at', 'desc') // Explicit
+     */
+    public function sort(?string $column = null, ?string $direction = null): self
+    {
+        $column = $column ?? ($_GET['sort'] ?? 'id');
+        $direction = $direction ?? ($_GET['order'] ?? 'desc');
+
+        return $this->orderBy($column, $direction);
+    }
+
+    /**
      * Set columns to select
      * Optimized: Marks SQL as dirty when query changes
      */
@@ -283,9 +391,9 @@ class QueryBuilder
      * 
      * Creates: WHERE (name LIKE '%john%' OR email LIKE '%john%')
      */
-    public function search(string $term, array|string $columns): self
+    public function search(?string $term, array|string $columns): self
     {
-        if (empty($term)) {
+        if ($term === null || $term === '') {
             return $this;
         }
 
@@ -563,10 +671,15 @@ class QueryBuilder
     public function count(): int
     {
         $sql = "SELECT COUNT(*) as count FROM `{$this->table}`";
-        $where = $this->buildWhere();
-        if ($where) $sql .= ' ' . $where;
+        $whereData = $this->buildWhere();
 
-        $result = $this->db->query($sql);
+        // buildWhere returns array with 'sql' and 'bindings'
+        if (!empty($whereData['sql'])) {
+            $sql .= ' ' . $whereData['sql'];
+        }
+
+        // Use prepared statement with bindings
+        $result = $this->db->prepare($sql, $whereData['bindings'] ?? []);
         if ($result && $row = $result->fetch_assoc()) {
             return (int)$row['count'];
         }
@@ -1147,5 +1260,730 @@ class QueryBuilder
         } while ($count == $size);
 
         return true;
+    }
+
+    // ============================================
+    // SUBQUERIES
+    // ============================================
+
+    /**
+     * Add WHERE IN with subquery
+     * Usage: User::whereInSub('id', function($q) { 
+     *            $q->table('orders')->select(['user_id'])->where('total', '>', 100);
+     *        })->all()
+     * 
+     * @param string $column Column to compare
+     * @param \Closure $callback Callback that receives a fresh QueryBuilder
+     * @return self
+     */
+    public function whereInSub(string $column, \Closure $callback): self
+    {
+        $subQuery = new self($this->model);
+        $callback($subQuery);
+
+        $subSql = $subQuery->buildSubSelect();
+
+        $this->where[] = [
+            'column' => $column,
+            'operator' => 'IN',
+            'value' => "({$subSql})",
+            'logic' => 'AND'
+        ];
+
+        $this->sqlDirty = true;
+        return $this;
+    }
+
+    /**
+     * Add WHERE NOT IN with subquery
+     */
+    public function whereNotInSub(string $column, \Closure $callback): self
+    {
+        $subQuery = new self($this->model);
+        $callback($subQuery);
+
+        $subSql = $subQuery->buildSubSelect();
+
+        $this->where[] = [
+            'column' => $column,
+            'operator' => 'NOT IN',
+            'value' => "({$subSql})",
+            'logic' => 'AND'
+        ];
+
+        $this->sqlDirty = true;
+        return $this;
+    }
+
+    /**
+     * Add WHERE EXISTS with subquery
+     * Usage: User::whereExists(function($q) { 
+     *            $q->table('orders')->whereRaw('orders.user_id = users.id');
+     *        })->all()
+     */
+    public function whereExists(\Closure $callback): self
+    {
+        $subQuery = new self($this->model);
+        $callback($subQuery);
+
+        $subSql = $subQuery->buildSubSelect();
+
+        $this->where[] = [
+            'column' => "EXISTS ({$subSql})",
+            'operator' => '',
+            'value' => '',
+            'logic' => 'AND'
+        ];
+
+        $this->sqlDirty = true;
+        return $this;
+    }
+
+    /**
+     * Add WHERE NOT EXISTS with subquery
+     */
+    public function whereNotExists(\Closure $callback): self
+    {
+        $subQuery = new self($this->model);
+        $callback($subQuery);
+
+        $subSql = $subQuery->buildSubSelect();
+
+        $this->where[] = [
+            'column' => "NOT EXISTS ({$subSql})",
+            'operator' => '',
+            'value' => '',
+            'logic' => 'AND'
+        ];
+
+        $this->sqlDirty = true;
+        return $this;
+    }
+
+    /**
+     * Set the table for subqueries
+     */
+    public function table(string $table): self
+    {
+        $this->table = $table;
+        $this->sqlDirty = true;
+        return $this;
+    }
+
+    /**
+     * Build SQL for use as a subquery (without bindings interpolation)
+     */
+    protected function buildSubSelect(): string
+    {
+        $query = $this->buildSql();
+        return $query['sql'];
+    }
+
+    // ============================================
+    // RAW EXPRESSIONS
+    // ============================================
+
+    /**
+     * Add raw SELECT expression
+     * Usage: Order::selectRaw('COUNT(*) as count, DATE(created_at) as day')
+     *              ->groupBy('day')->all()
+     * 
+     * @param string $expression Raw SQL expression
+     * @param array $bindings Parameter bindings
+     * @return self
+     */
+    public function selectRaw(string $expression, array $bindings = []): self
+    {
+        // Interpolate bindings
+        foreach ($bindings as $binding) {
+            $escaped = is_numeric($binding) ? $binding : "'" . $this->db->escape($binding) . "'";
+            $expression = preg_replace('/\?/', $escaped, $expression, 1);
+        }
+
+        if ($this->select === ['*']) {
+            $this->select = [];
+        }
+
+        $this->select[] = $expression;
+        $this->sqlDirty = true;
+        return $this;
+    }
+
+    /**
+     * Add to SELECT clause with raw expression
+     */
+    public function addSelectRaw(string $expression, array $bindings = []): self
+    {
+        foreach ($bindings as $binding) {
+            $escaped = is_numeric($binding) ? $binding : "'" . $this->db->escape($binding) . "'";
+            $expression = preg_replace('/\?/', $escaped, $expression, 1);
+        }
+
+        if ($this->select === ['*']) {
+            $this->select = [];
+        }
+
+        $this->select[] = $expression;
+        $this->sqlDirty = true;
+        return $this;
+    }
+
+    /**
+     * Add raw ORDER BY expression
+     * Usage: User::orderByRaw('FIELD(status, "active", "pending", "inactive")')
+     */
+    public function orderByRaw(string $expression): self
+    {
+        $this->orderBy[] = [
+            'column' => $expression,
+            'direction' => '',
+            'raw' => true
+        ];
+        $this->sqlDirty = true;
+        return $this;
+    }
+
+    // ============================================
+    // UNION QUERIES
+    // ============================================
+
+    protected array $unions = [];
+
+    /**
+     * Add UNION query
+     * Usage: User::where('type', 'admin')
+     *            ->union(User::where('type', 'moderator'))
+     *            ->all()
+     * 
+     * @param QueryBuilder $query Another query to union
+     * @param bool $all Use UNION ALL (keeps duplicates)
+     * @return self
+     */
+    public function union(QueryBuilder $query, bool $all = false): self
+    {
+        $this->unions[] = [
+            'query' => $query,
+            'all' => $all
+        ];
+        $this->sqlDirty = true;
+        return $this;
+    }
+
+    /**
+     * Add UNION ALL query (keeps duplicates)
+     */
+    public function unionAll(QueryBuilder $query): self
+    {
+        return $this->union($query, true);
+    }
+
+    // ============================================
+    // UPSERT (INSERT OR UPDATE)
+    // ============================================
+
+    /**
+     * Insert or update records (upsert)
+     * Uses INSERT ... ON DUPLICATE KEY UPDATE for MySQL
+     * 
+     * Usage: User::upsert(
+     *            ['email' => 'john@example.com', 'name' => 'John'],
+     *            ['email'],  // Unique keys to match on
+     *            ['name']    // Columns to update if exists
+     *        )
+     * 
+     * @param array $values Values to insert
+     * @param array $uniqueBy Columns that define uniqueness
+     * @param array $update Columns to update on duplicate (null = all non-unique)
+     * @return bool Success
+     */
+    public function upsert(array $values, array $uniqueBy, ?array $update = null): bool
+    {
+        if (empty($values)) {
+            return false;
+        }
+
+        // Normalize to array of arrays
+        if (!isset($values[0]) || !is_array($values[0])) {
+            $values = [$values];
+        }
+
+        $columns = array_keys($values[0]);
+        $update = $update ?? array_diff($columns, $uniqueBy);
+
+        // Build column list
+        $columnList = implode(', ', array_map(fn($c) => "`{$c}`", $columns));
+
+        // Build values list
+        $valueSets = [];
+        foreach ($values as $row) {
+            $escaped = [];
+            foreach ($columns as $col) {
+                $val = $row[$col] ?? null;
+                $escaped[] = $val === null ? 'NULL' : "'" . $this->db->escape($val) . "'";
+            }
+            $valueSets[] = '(' . implode(', ', $escaped) . ')';
+        }
+
+        // Build update clause
+        $updateParts = [];
+        foreach ($update as $col) {
+            $updateParts[] = "`{$col}` = VALUES(`{$col}`)";
+        }
+
+        $sql = "INSERT INTO `{$this->table}` ({$columnList}) VALUES " . implode(', ', $valueSets);
+
+        if (!empty($updateParts)) {
+            $sql .= " ON DUPLICATE KEY UPDATE " . implode(', ', $updateParts);
+        }
+
+        return $this->db->query($sql) !== false;
+    }
+
+    // ============================================
+    // BATCH INSERT
+    // ============================================
+
+    /**
+     * Insert multiple records efficiently with chunking
+     * 
+     * Usage: User::insertMany([
+     *            ['name' => 'John', 'email' => 'john@example.com'],
+     *            ['name' => 'Jane', 'email' => 'jane@example.com'],
+     *        ])
+     * 
+     * @param array $records Array of records to insert
+     * @param int $chunkSize Records per query (default 500)
+     * @return int Number of records inserted
+     */
+    public function insertMany(array $records, int $chunkSize = 500): int
+    {
+        if (empty($records)) {
+            return 0;
+        }
+
+        $inserted = 0;
+        $chunks = array_chunk($records, $chunkSize);
+
+        foreach ($chunks as $chunk) {
+            $columns = array_keys($chunk[0]);
+            $columnList = implode(', ', array_map(fn($c) => "`{$c}`", $columns));
+
+            $valueSets = [];
+            foreach ($chunk as $row) {
+                $escaped = [];
+                foreach ($columns as $col) {
+                    $val = $row[$col] ?? null;
+                    $escaped[] = $val === null ? 'NULL' : "'" . $this->db->escape($val) . "'";
+                }
+                $valueSets[] = '(' . implode(', ', $escaped) . ')';
+            }
+
+            $sql = "INSERT INTO `{$this->table}` ({$columnList}) VALUES " . implode(', ', $valueSets);
+
+            if ($this->db->query($sql) !== false) {
+                $inserted += count($chunk);
+            }
+        }
+
+        return $inserted;
+    }
+
+    /**
+     * Insert a single record and return the inserted ID
+     * 
+     * @param array $values Column => value pairs
+     * @return int|false Inserted ID or false on failure
+     */
+    public function insertGetId(array $values): int|false
+    {
+        $columns = array_keys($values);
+        $columnList = implode(', ', array_map(fn($c) => "`{$c}`", $columns));
+
+        $escaped = [];
+        foreach ($values as $val) {
+            $escaped[] = $val === null ? 'NULL' : "'" . $this->db->escape($val) . "'";
+        }
+        $valueList = implode(', ', $escaped);
+
+        $sql = "INSERT INTO `{$this->table}` ({$columnList}) VALUES ({$valueList})";
+
+        if ($this->db->query($sql) !== false) {
+            return $this->db->insert_id();
+        }
+
+        return false;
+    }
+
+    // ============================================
+    // CURSOR / LAZY COLLECTION
+    // ============================================
+
+    /**
+     * Iterate over results lazily using a generator
+     * Memory-efficient for large datasets
+     * 
+     * Usage: foreach (User::cursor() as $user) { ... }
+     * 
+     * @return \Generator
+     */
+    public function cursor(): \Generator
+    {
+        $query = $this->buildSql();
+        $result = $this->db->prepare($query['sql'], $query['bindings']);
+
+        if (!$result) {
+            return;
+        }
+
+        while ($row = $result->fetch_assoc()) {
+            if ($this->returnFormat === 'model') {
+                yield $this->model->newInstance($row);
+            } elseif ($this->returnFormat === 'object') {
+                yield (object)$row;
+            } else {
+                yield $row;
+            }
+        }
+    }
+
+    /**
+     * Get results as a lazy collection (alias for cursor)
+     */
+    public function lazy(): \Generator
+    {
+        return $this->cursor();
+    }
+
+    // ============================================
+    // QUERY PROFILING / DEBUGGING
+    // ============================================
+
+    protected static bool $enableQueryLog = false;
+    protected static array $queryLog = [];
+    protected static ?float $slowQueryThreshold = null;
+
+    /**
+     * Enable query logging for debugging
+     */
+    public static function enableQueryLog(): void
+    {
+        self::$enableQueryLog = true;
+    }
+
+    /**
+     * Disable query logging
+     */
+    public static function disableQueryLog(): void
+    {
+        self::$enableQueryLog = false;
+    }
+
+    /**
+     * Get all logged queries
+     * 
+     * @return array Array of ['sql' => ..., 'bindings' => ..., 'time' => ...]
+     */
+    public static function getQueryLog(): array
+    {
+        return self::$queryLog;
+    }
+
+    /**
+     * Clear the query log
+     */
+    public static function clearQueryLog(): void
+    {
+        self::$queryLog = [];
+    }
+
+    /**
+     * Set slow query threshold (queries taking longer are logged as warnings)
+     * 
+     * @param float $seconds Threshold in seconds
+     */
+    public static function setSlowQueryThreshold(float $seconds): void
+    {
+        self::$slowQueryThreshold = $seconds;
+    }
+
+    /**
+     * Log a query execution
+     */
+    protected function logQuery(string $sql, array $bindings, float $time): void
+    {
+        if (self::$enableQueryLog) {
+            self::$queryLog[] = [
+                'sql' => $sql,
+                'bindings' => $bindings,
+                'time' => round($time * 1000, 2), // Convert to milliseconds
+            ];
+        }
+
+        // Log slow queries
+        if (self::$slowQueryThreshold !== null && $time > self::$slowQueryThreshold) {
+            error_log("[SLOW QUERY] {$time}s: {$sql}");
+        }
+    }
+
+    // ============================================
+    // FIRST OR CREATE / UPDATE OR CREATE
+    // ============================================
+
+    /**
+     * Get first record matching attributes, or create it
+     * 
+     * Usage: User::firstOrCreate(['email' => 'john@example.com'], ['name' => 'John'])
+     * 
+     * @param array $attributes Attributes to search by
+     * @param array $values Additional values for creation
+     * @return Model
+     */
+    public function firstOrCreate(array $attributes, array $values = []): Model
+    {
+        foreach ($attributes as $key => $value) {
+            $this->where($key, $value);
+        }
+
+        $model = $this->one();
+
+        if ($model !== null) {
+            return $model;
+        }
+
+        // Create new record
+        $createData = array_merge($attributes, $values);
+        return $this->model::create($createData);
+    }
+
+    /**
+     * Get first record matching attributes, or create a new instance (not saved)
+     * 
+     * @param array $attributes Attributes to search by
+     * @param array $values Additional values for new instance
+     * @return Model
+     */
+    public function firstOrNew(array $attributes, array $values = []): Model
+    {
+        foreach ($attributes as $key => $value) {
+            $this->where($key, $value);
+        }
+
+        $model = $this->one();
+
+        if ($model !== null) {
+            return $model;
+        }
+
+        // Create new instance (not saved)
+        $createData = array_merge($attributes, $values);
+        return $this->model->newInstance($createData);
+    }
+
+    /**
+     * Update existing record or create new one
+     * 
+     * Usage: User::updateOrCreate(['email' => 'john@example.com'], ['name' => 'John Updated'])
+     * 
+     * @param array $attributes Attributes to search by
+     * @param array $values Values to update/create with
+     * @return Model
+     */
+    public function updateOrCreate(array $attributes, array $values = []): Model
+    {
+        foreach ($attributes as $key => $value) {
+            $this->where($key, $value);
+        }
+
+        $model = $this->one();
+
+        if ($model !== null) {
+            $model->update($values);
+            return $model;
+        }
+
+        // Create new record
+        $createData = array_merge($attributes, $values);
+        return $this->model::create($createData);
+    }
+
+    // ============================================
+    // LOCKING
+    // ============================================
+
+    protected ?string $lockType = null;
+
+    /**
+     * Add FOR UPDATE lock (pessimistic write lock)
+     * Use within a transaction to lock rows for update
+     * 
+     * Usage: DB::transaction(function() {
+     *            $user = User::where('id', 1)->lockForUpdate()->one();
+     *            $user->balance -= 100;
+     *            $user->save();
+     *        })
+     */
+    public function lockForUpdate(): self
+    {
+        $this->lockType = 'FOR UPDATE';
+        $this->sqlDirty = true;
+        return $this;
+    }
+
+    /**
+     * Add FOR SHARE lock (pessimistic read lock)
+     * Allows other transactions to read but not update
+     */
+    public function sharedLock(): self
+    {
+        $this->lockType = 'FOR SHARE';
+        $this->sqlDirty = true;
+        return $this;
+    }
+
+    /**
+     * Alias for sharedLock()
+     */
+    public function forShare(): self
+    {
+        return $this->sharedLock();
+    }
+
+    // ============================================
+    // PLUCK / VALUE HELPERS
+    // ============================================
+
+    /**
+     * Get an array of values for a single column
+     * 
+     * Usage: $emails = User::where('active', 1)->pluck('email');
+     *        $namesByEmail = User::pluck('name', 'email'); // keyed by email
+     * 
+     * @param string $column Column to pluck
+     * @param string|null $key Column to use as array key
+     * @return array
+     */
+    public function pluck(string $column, ?string $key = null): array
+    {
+        $originalSelect = $this->select;
+
+        $this->select = $key ? [$column, $key] : [$column];
+        $results = $this->asArrays()->all();
+
+        $this->select = $originalSelect;
+
+        $plucked = [];
+        foreach ($results as $row) {
+            if ($key !== null) {
+                $plucked[$row[$key]] = $row[$column];
+            } else {
+                $plucked[] = $row[$column];
+            }
+        }
+
+        return $plucked;
+    }
+
+    /**
+     * Get a single column value from the first result
+     * 
+     * Usage: $email = User::where('id', 1)->value('email');
+     * 
+     * @param string $column Column to get
+     * @return mixed
+     */
+    public function value(string $column): mixed
+    {
+        $originalSelect = $this->select;
+
+        $this->select = [$column];
+        $result = $this->asArrays()->one();
+
+        $this->select = $originalSelect;
+
+        return $result[$column] ?? null;
+    }
+
+    // ============================================
+    // INCREMENT / DECREMENT
+    // ============================================
+
+    /**
+     * Increment a column's value
+     * 
+     * Usage: User::where('id', 1)->increment('login_count');
+     *        Product::where('id', 1)->increment('stock', 10);
+     * 
+     * @param string $column Column to increment
+     * @param int|float $amount Amount to increment by
+     * @param array $extra Additional columns to update
+     * @return int Affected rows
+     */
+    public function increment(string $column, int|float $amount = 1, array $extra = []): int
+    {
+        $updates = ["`{$column}` = `{$column}` + {$amount}"];
+
+        foreach ($extra as $key => $value) {
+            $escaped = is_numeric($value) ? $value : "'" . $this->db->escape($value) . "'";
+            $updates[] = "`{$key}` = {$escaped}";
+        }
+
+        $whereData = $this->buildWhere();
+        $sql = "UPDATE `{$this->table}` SET " . implode(', ', $updates);
+        if ($whereData['sql']) {
+            $sql .= ' ' . $whereData['sql'];
+        }
+
+        $this->db->prepare($sql, $whereData['bindings']);
+        return $this->db->affected_rows();
+    }
+
+    /**
+     * Decrement a column's value
+     * 
+     * Usage: Product::where('id', 1)->decrement('stock', 5);
+     */
+    public function decrement(string $column, int|float $amount = 1, array $extra = []): int
+    {
+        return $this->increment($column, -$amount, $extra);
+    }
+
+    // ============================================
+    // DELETE OPERATIONS
+    // ============================================
+
+    /**
+     * Delete records matching the query
+     * 
+     * Usage: User::where('status', 'inactive')->delete();
+     * 
+     * @return int Number of deleted rows
+     */
+    public function delete(): int
+    {
+        $whereData = $this->buildWhere();
+
+        $sql = "DELETE FROM `{$this->table}`";
+        if ($whereData['sql']) {
+            $sql .= ' ' . $whereData['sql'];
+        }
+
+        if ($this->limit !== null) {
+            $sql .= ' LIMIT ' . $this->limit;
+        }
+
+        $this->db->prepare($sql, $whereData['bindings']);
+        return $this->db->affected_rows();
+    }
+
+    /**
+     * Truncate the table (delete all records, reset auto-increment)
+     * 
+     * Usage: User::truncate();
+     * 
+     * @return bool Success
+     */
+    public function truncate(): bool
+    {
+        return $this->db->query("TRUNCATE TABLE `{$this->table}`") !== false;
     }
 }

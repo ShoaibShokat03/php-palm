@@ -2,7 +2,7 @@
   "name": "php-palm/project",
   "description": "PHP Palm starter project",
   "type": "project",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "license": "MIT",
   "authors": [
     {
@@ -33,7 +33,7 @@
   },
   "scripts": {
     "post-create-project-cmd": [
-      "@php -r \"copy('.env.example', '.env');\""
+      "@php -r \"copy('.env');\""
     ]
   }
 }

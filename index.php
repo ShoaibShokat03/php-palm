@@ -37,6 +37,12 @@ if (file_exists(__DIR__ . '/vendor/autoload.php')) {
     require __DIR__ . '/vendor/autoload.php';
 }
 
+// Load environment variables early (needed for DB, App Access, etc.)
+if (!isset($_ENV['APP_ENV']) && file_exists(__DIR__ . '/config/.env')) {
+    $dotenv = \Dotenv\Dotenv::createImmutable(__DIR__ . '/config/');
+    $dotenv->load();
+}
+
 use PhpPalm\Core\Route;
 use App\Core\ApplicationBootstrap;
 use App\Core\PublicFileServer;
@@ -58,6 +64,7 @@ $publicFileServer = new PublicFileServer(__DIR__ . '/public');
 // Block direct access to /app/ directory if configured
 if (strpos($requestPath, '/app/') === 0 || preg_match('#(/|^)app/#', $requestPath)) {
     $appAccessConfig = require __DIR__ . '/config/app_access.php';
+
 
     if ($appAccessConfig['restrict_access']) {
         // Get client IP (handle forwarded headers)
@@ -252,8 +259,21 @@ if (!$isApiRequest) {
         palm_exit();
     }
 
+    // Calculate target route path (handling subdirectories)
+    $basePath = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'])), '/');
+    if (!empty($basePath) && strpos($requestPath, $basePath) === 0) {
+        $targetRoutePath = substr($requestPath, strlen($basePath));
+    } else {
+        $targetRoutePath = $requestPath;
+    }
+
+    $targetRoutePath = rtrim($targetRoutePath, '/');
+    if (empty($targetRoutePath)) {
+        $targetRoutePath = '/';
+    }
+
     // Dispatch the route
-    FrontendRoute::dispatch($_SERVER['REQUEST_METHOD'] ?? 'GET', $_SERVER['REQUEST_URI'] ?? '/');
+    FrontendRoute::dispatch($_SERVER['REQUEST_METHOD'] ?? 'GET', $targetRoutePath);
     palm_exit();
 }
 
@@ -281,8 +301,8 @@ try {
         palm_exit();
     }
 
-    // Load environment variables (if not already loaded by bootstrap)
-    if (!isset($_ENV['APP_ENV'])) {
+    // Load environment variables (already loaded at top, double check if needed)
+    if (!isset($_ENV['APP_ENV']) && file_exists(__DIR__ . '/config/.env')) {
         $dotenv = \Dotenv\Dotenv::createImmutable(__DIR__ . '/config/');
         $dotenv->load();
     }
@@ -313,6 +333,7 @@ try {
     if (empty($targetRoutePath)) {
         $targetRoutePath = '/';
     }
+
     $requestMethod = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
 
     // -------- CORS CONFIG ----------

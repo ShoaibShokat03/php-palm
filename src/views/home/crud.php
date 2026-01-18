@@ -2,26 +2,15 @@
 
 /** @phpstan-ignore-file */
 
-use Frontend\Palm\Render;
-use App\Core\App;
-
 // Include pagination component
 // require_once dirname(__DIR__, 2) . '/components/pagination.php';
 
 ?>
 
 <div class="content-section">
-    <div class="page-header" style="display: flex; justify-content: space-between; align-items: center;">
-        <div>
-            <h1>Users</h1>
-            <p class="lead">Manage and view all users in the system</p>
-        </div>
-        <a href="<?= App::route('/users/create') ?>" class="btn btn-primary">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 0.5rem; vertical-align: bottom;">
-                <path d="M12 5v14M5 12h14"></path>
-            </svg>
-            Create User
-        </a>
+    <div class="page-header">
+        <h1>Users</h1>
+        <p class="lead">Manage and view all users in the system</p>
     </div>
 
     <?php // Search and Filter Controls 
@@ -50,9 +39,6 @@ use App\Core\App;
                 <option value="editor" <?= ($_GET['role'] ?? '') === 'editor' ? 'selected' : '' ?>>Editor</option>
             </select>
             <span>
-                <a href="<?= App::route('/users') ?>" class="reset-btn">Reset</a>
-            </span>
-            <span>
                 <strong>Total: <?= $meta['total'] ?? 0 ?></strong>
             </span>
             <input type="hidden" name="per_page" value="<?= $_GET['per_page'] ?? 10 ?>">
@@ -74,23 +60,12 @@ use App\Core\App;
                 <p>Try adjusting your search or filter criteria</p>
             </div>
         <?php else: ?>
-            <div class="pagination-box" style="padding:10px;">
-                <?php if (isset($meta)): ?>
-                    <?php Render::component('Pagination', ['meta' => $meta]) ?>
-                <?php endif; ?>
-            </div>
             <table class="data-table">
                 <thead>
                     <tr>
                         <th class="th-narrow">#</th>
                         <th>
-                            <?php
-                            $sortParams = array_merge($_GET, [
-                                'sort' => 'name',
-                                'order' => ($_GET['sort'] ?? '') === 'name' && ($_GET['order'] ?? 'desc') === 'asc' ? 'desc' : 'asc'
-                            ]);
-                            ?>
-                            <a href="<?= App::route('/users', $sortParams) ?>" class="sort-link">
+                            <a href="?sort=name&order=<?= ($_GET['sort'] ?? '') === 'name' && ($_GET['order'] ?? 'desc') === 'asc' ? 'desc' : 'asc' ?>&<?= http_build_query(array_diff_key($_GET, ['sort' => '', 'order' => ''])) ?>" class="sort-link">
                                 Name
                                 <?php if (($_GET['sort'] ?? '') === 'name'): ?>
                                     <span class="sort-icon"><?= ($_GET['order'] ?? 'desc') === 'asc' ? '↑' : '↓' ?></span>
@@ -98,13 +73,7 @@ use App\Core\App;
                             </a>
                         </th>
                         <th>
-                            <?php
-                            $sortParams = array_merge($_GET, [
-                                'sort' => 'email',
-                                'order' => ($_GET['sort'] ?? '') === 'email' && ($_GET['order'] ?? 'desc') === 'asc' ? 'desc' : 'asc'
-                            ]);
-                            ?>
-                            <a href="<?= App::route('/users', $sortParams) ?>" class="sort-link">
+                            <a href="?sort=email&order=<?= ($_GET['sort'] ?? '') === 'email' && ($_GET['order'] ?? 'desc') === 'asc' ? 'desc' : 'asc' ?>&<?= http_build_query(array_diff_key($_GET, ['sort' => '', 'order' => ''])) ?>" class="sort-link">
                                 Email
                                 <?php if (($_GET['sort'] ?? '') === 'email'): ?>
                                     <span class="sort-icon"><?= ($_GET['order'] ?? 'desc') === 'asc' ? '↑' : '↓' ?></span>
@@ -135,25 +104,29 @@ use App\Core\App;
                                 <span class="status-badge status-<?= $role ?>"><?= ucfirst($role) ?></span>
                             </td>
                             <td class="td-actions">
-                                <a href="<?= App::route('/users/' . $user['id'] . '/edit') ?>" class="action-btn" title="Edit">
+                                <button class="action-btn" title="View">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                        <circle cx="12" cy="12" r="3"></circle>
+                                    </svg>
+                                </button>
+                                <button class="action-btn" title="Edit">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                                     </svg>
-                                </a>
-                                <form action="<?= App::route('/users/' . $user['id'] . '/delete') ?>" method="POST" onsubmit="return confirm('Are you sure you want to delete this user?');" style="display:inline;">
-                                    <button type="submit" class="action-btn" title="Delete" style="color: #ef4444;">
-                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <polyline points="3 6 5 6 21 6"></polyline>
-                                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                        </svg>
-                                    </button>
-                                </form>
+                                </button>
                             </td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>
             </table>
+
+            <?php // Render pagination 
+            ?>
+            <?php if (isset($meta)): ?>
+                <?= component('Pagination', ['meta' => $meta]) ?>
+            <?php endif; ?>
         <?php endif; ?>
     </div>
 </div>

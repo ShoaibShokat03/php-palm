@@ -34,6 +34,7 @@ class Db
     private static array $localCache = [];
     private static array $localTableVersions = [];
     private ?string $lastError = null;
+    private int $lastAffectedRows = 0;
 
     public function __construct()
     {
@@ -167,7 +168,8 @@ class Db
                 return new DbResult($rows);
             }
 
-            // For INSERT/UPDATE/DELETE, return success status
+            // For INSERT/UPDATE/DELETE, store affected rows and return success status
+            $this->lastAffectedRows = $stmt->rowCount();
             return true;
         } catch (PDOException $e) {
             $this->lastError = $e->getMessage();
@@ -201,6 +203,14 @@ class Db
     {
         $this->connect();
         return (int)$this->conn->lastInsertId();
+    }
+
+    /**
+     * Get the number of rows affected by the last INSERT, UPDATE, or DELETE query.
+     */
+    public function affected_rows(): int
+    {
+        return $this->lastAffectedRows;
     }
 
     /**

@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Controller Generator
  * File: Controller.php
@@ -75,6 +76,7 @@ namespace App\\Modules\\{$moduleName};
 
 use App\\Core\\Controller as BaseController;
 use App\\Modules\\{$moduleName}\\Service;
+use App\\Core\\App;
 
 class Controller extends BaseController
 {
@@ -113,7 +115,7 @@ class Controller extends BaseController
      */
     public function store(): array
     {
-        \$requestData = \$this->getRequestData();
+        \$requestData = App::request()->all();
         
         \$result = \$this->service->create(\$requestData);
         
@@ -129,7 +131,7 @@ class Controller extends BaseController
      */
     public function update(string \$id): array
     {
-        \$requestData = \$this->getRequestData();
+        \$requestData = App::request()->all();
         
         \$result = \$this->service->update((int)\$id, \$requestData);
         

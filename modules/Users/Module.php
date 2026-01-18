@@ -6,9 +6,6 @@ use App\Core\Module as BaseModule;
 use App\Modules\Users\Controller;
 use PhpPalm\Core\Route;
 
-/**
- * Users Module
- */
 class Module extends BaseModule
 {
     public function __construct()
@@ -18,13 +15,11 @@ class Module extends BaseModule
 
     public function registerRoutes(): void
     {
-        $controller = new Controller();
-
-        // Register routes
-        Route::get('/users', [$controller, 'index']);
-        Route::get('/users/{id}', [$controller, 'show']);
-        Route::post('/users', [$controller, 'store']);
-        Route::put('/users/{id}', [$controller, 'update']);
-        Route::delete('/users/{id}', [$controller, 'destroy']);
+        $c = new Controller();
+        Route::get('/users', [$c, 'index']);
+        Route::get('/users/{id}', [$c, 'show']);
+        Route::post('/users', [$c, 'store']);
+        Route::put('/users/{id}', [$c, 'update']);
+        Route::delete('/users/{id}', [$c, 'destroy']);
     }
 }

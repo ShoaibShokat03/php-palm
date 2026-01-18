@@ -3,79 +3,94 @@
 /**
  * Module Generator (Improved)
  * Creates a complete module with ActiveRecord support
- * Files: Module.php, Controller.php, Service.php, Model.php
+ * Files: Module.php, Controller.php, Service.php, Model.php, API.md
  */
+
+require_once __DIR__ . '/ApiDocGenerator.php';
+require_once __DIR__ . '/TableModuleGenerator.php';
+require __DIR__ . '/../../vendor/autoload.php'; // Required for TableModuleGenerator DB usage
+
+use App\Database\Db;
 
 if ($argc < 2) {
     echo "\n";
     echo "Error: Module name is required\n";
     echo "\n";
     echo "Usage: php make-module.php <ModuleName> [route-prefix]\n";
+    echo "       php make-module.php <ModuleName> usetable <table-name>\n";
     echo "\n";
     echo "Examples:\n";
     echo "  php make-module.php Product\n";
     echo "  php make-module.php Product /products\n";
-    echo "  php make-module.php products\n";
+    echo "  php make-module.php Products usetable products\n";
     echo "\n";
     exit(1);
 }
 
-// Get module name and ensure it's not empty
+// Get module name
 $moduleName = trim($argv[1]);
+
+// Validation
 if (empty($moduleName)) {
-    echo "\n";
     echo "Error: Module name cannot be empty\n";
-    echo "\n";
     exit(1);
 }
-
-// Validate module name (alphanumeric and underscores only)
 if (!preg_match('/^[a-zA-Z0-9_]+$/', $moduleName)) {
-    echo "\n";
     echo "Error: Module name can only contain letters, numbers, and underscores\n";
-    echo "Invalid module name: $moduleName\n";
-    echo "\n";
     exit(1);
 }
 
-// Convert to PascalCase (handle snake_case and lowercase)
+// Normalize Module Name
 $moduleName = str_replace('_', ' ', $moduleName);
 $moduleName = ucwords(strtolower($moduleName));
 $moduleName = str_replace(' ', '', $moduleName);
 $moduleName = ucfirst($moduleName);
 
-$routePrefix = isset($argv[2]) && !empty(trim($argv[2])) ? trim($argv[2]) : '/' . strtolower($moduleName);
+$arg2 = isset($argv[2]) ? trim($argv[2]) : null;
+
+// Check for 'usetable' command
+if ($arg2 === 'usetable' || $arg2 === '--usetable') {
+    $tableName = $argv[3] ?? null;
+    if (!$tableName) {
+        echo "Error: Table name is required when using usetable.\n";
+        echo "Usage: palm make module {$moduleName} usetable <table_name>\n";
+        exit(1);
+    }
+
+    // Load environment (needed for Db)
+    $envPath = __DIR__ . '/../../config';
+    if (file_exists($envPath . '/.env')) {
+        $dotenv = Dotenv\Dotenv::createImmutable($envPath);
+        $dotenv->load();
+    } elseif (file_exists(__DIR__ . '/../../.env')) {
+        $dotenv = Dotenv\Dotenv::createImmutable(__DIR__ . '/../..');
+        $dotenv->load();
+    }
+
+    $db = new Db();
+    $db->connect();
+
+    echo "🚀 Generating Module '{$moduleName}' from table '{$tableName}'...\n";
+    TableModuleGenerator::generate($db, $tableName, $moduleName);
+    exit(0);
+}
+
+$routePrefix = (!empty($arg2) && strpos($arg2, '/') === 0) ? $arg2 : '/' . strtolower($moduleName);
 $modulePath = __DIR__ . '/../../modules/' . $moduleName;
 
 // Ensure modules directory exists
 $modulesDir = __DIR__ . '/../../modules';
-if (!is_dir($modulesDir)) {
-    if (!mkdir($modulesDir, 0777, true)) {
-        echo "\n";
-        echo "Error: Could not create modules directory: $modulesDir\n";
-        echo "\n";
-        exit(1);
-    }
-}
+if (!is_dir($modulesDir)) mkdir($modulesDir, 0777, true);
 
 // Create module directory
 if (!is_dir($modulePath)) {
     if (!mkdir($modulePath, 0777, true)) {
-        echo "\n";
         echo "Error: Could not create module directory: $modulePath\n";
-        echo "\n";
         exit(1);
     }
     echo "Created directory: $modulePath\n";
 } else {
-    echo "\n";
-    echo "Error: Module directory already exists: $modulePath\n";
-    echo "\n";
-    echo "If you want to add files to an existing module, use:\n";
-    echo "  palm make controller $moduleName <ControllerName>\n";
-    echo "  palm make model $moduleName <ModelName>\n";
-    echo "  palm make service $moduleName <ServiceName>\n";
-    echo "\n";
+    echo "\nError: Module directory already exists: $modulePath\n\n";
     exit(1);
 }
 
@@ -83,11 +98,11 @@ if (!is_dir($modulePath)) {
 $moduleContent = <<<PHP
 <?php
 
-namespace App\\Modules\\{$moduleName};
+namespace App\Modules\\{$moduleName};
 
-use App\\Core\\Module as BaseModule;
-use App\\Modules\\{$moduleName}\\Controller;
-use PhpPalm\\Core\\Route;
+use App\Core\Module as BaseModule;
+use App\Modules\\{$moduleName}\\Controller;
+use PhpPalm\Core\Route;
 
 /**
  * {$moduleName} Module
@@ -115,52 +130,26 @@ class Module extends BaseModule
     // CONVENIENCE METHODS FOR INTERNAL CALLS
     // ============================================
 
-    /**
-     * Get all records (convenience method)
-     * 
-     * Usage: {$moduleName}Module::all()
-     *        {$moduleName}Module::all(['status' => 'active', 'limit' => 10])
-     */
     public static function all(array \$filters = []): array
     {
         return static::get("/", \$filters);
     }
 
-    /**
-     * Find record by ID
-     * 
-     * Usage: {$moduleName}Module::find(5)
-     */
     public static function find(int \$id): ?array
     {
         return static::get("/{id}", ['id' => \$id]);
     }
 
-    /**
-     * Create new record
-     * 
-     * Usage: {$moduleName}Module::createRecord(['name' => 'John'])
-     */
     public static function createRecord(array \$data): array
     {
         return static::post("/", \$data);
     }
 
-    /**
-     * Update record
-     * 
-     * Usage: {$moduleName}Module::updateRecord(5, ['name' => 'Jane'])
-     */
     public static function updateRecord(int \$id, array \$data): array
     {
         return static::put("/{id}", \$data, ['id' => \$id]);
     }
 
-    /**
-     * Delete record
-     * 
-     * Usage: {$moduleName}Module::deleteRecord(5)
-     */
     public static function deleteRecord(int \$id): array
     {
         return static::delete("/{id}", ['id' => \$id]);
@@ -175,10 +164,11 @@ echo "✅ Created: Module.php\n";
 $controllerContent = <<<PHP
 <?php
 
-namespace App\\Modules\\{$moduleName};
+namespace App\Modules\\{$moduleName};
 
-use App\\Core\\Controller as BaseController;
-use App\\Modules\\{$moduleName}\\Service;
+use App\Core\Controller as BaseController;
+use App\Modules\\{$moduleName}\\Service;
+use App\Core\App;
 
 class Controller extends BaseController
 {
@@ -191,22 +181,10 @@ class Controller extends BaseController
 
     /**
      * Get all {$moduleName} records
-     * Supports filtering via query parameters
      */
     public function index(): array
     {
-        // Extract query parameters for filtering
-        \$filters = [
-            'status' => \$_GET['status'] ?? null,
-            'search' => \$_GET['search'] ?? null,
-            'limit' => isset(\$_GET['limit']) ? (int)\$_GET['limit'] : null,
-            'offset' => isset(\$_GET['offset']) ? (int)\$ _GET['offset'] : null,
-        ];
-        
-        // Remove null values
-        \$filters = array_filter(\$filters, fn(\$v) => \$v !== null);
-        
-        \$data = \$this->service->getAll(\$filters);
+        \$data = \$this->service->getAll();
         return \$this->success(\$data, '{$moduleName} records retrieved successfully');
     }
 
@@ -229,8 +207,7 @@ class Controller extends BaseController
      */
     public function store(): array
     {
-        \$requestData = \$this->getRequestData();
-        
+        \$requestData = App::request()->all();
         \$result = \$this->service->create(\$requestData);
         
         if (\$result['success']) {
@@ -245,8 +222,7 @@ class Controller extends BaseController
      */
     public function update(string \$id): array
     {
-        \$requestData = \$this->getRequestData();
-        
+        \$requestData = App::request()->all();
         \$result = \$this->service->update((int)\$id, \$requestData);
         
         if (\$result['success']) {
@@ -275,67 +251,66 @@ PHP;
 file_put_contents($modulePath . '/Controller.php', $controllerContent);
 echo "✅ Created: Controller.php\n";
 
-// Generate Service.php (using ActiveRecord & Validation)
+// Generate Service.php
 $serviceContent = <<<PHP
 <?php
 
-namespace App\\Modules\\{$moduleName};
+namespace App\Modules\\{$moduleName};
 
-use App\\Core\\Service as BaseService;
-use App\\Modules\\{$moduleName}\\Model;
+use App\Core\Service as BaseService;
+use App\Modules\\{$moduleName}\\Model;
+use App\Core\App;
 
 class Service extends BaseService
 {
-    /**
-     * Get all {$moduleName} records
-     * Uses ActiveRecord: Model::all()
-     */
-    public function getAll(array \$filters = []): array
+    public function getAll(): array
     {
-        \$query = Model::query();
-        
-        // Example filters
-        if (isset(\$filters['search'])) {
-            \$query->where('name', 'LIKE', '%' . \$filters['search'] . '%');
-        }
-        
-        // Paging
-        if (isset(\$filters['limit'])) {
-            \$query->limit((int)\$filters['limit']);
-        }
-        if (isset(\$filters['offset'])) {
-            \$query->offset((int)\$filters['offset']);
-        }
-        
-        \$records = \$query->all();
-        
+        \$request = App::request();
+
+        \$page = max(1, (int)(\$request->get('page') ?? 1));
+        \$perPage = min(100, max(1, (int)(\$request->get('per_page') ?? 10)));
+        \$search = \$request->get('search') ?? null;
+
+        \$query = Model::where()
+            ->search(\$search, ['name', 'email']) 
+            ->autoFilter(['name', 'status'])
+            ->sort();
+
+        \$total = \$query->count();
+
+        \$records = \$query
+            ->paginate(\$page, \$perPage)
+            ->all();
+
+        \$lastPage = max(1, (int)ceil(\$total / \$perPage));
+        \$from = \$total > 0 ? ((\$page - 1) * \$perPage) + 1 : null;
+        \$to = \$total > 0 ? min(\$total, \$page * \$perPage) : null;
+
         return [
-            'total' => \$records->count(),
-            'items' => \$records,
-            'filters' => \$filters
+            'meta' => [
+                'total' => \$total,
+                'page' => \$page,
+                'per_page' => \$perPage,
+                'last_page' => \$lastPage,
+                'from' => \$from,
+                'to' => \$to,
+                'has_more' => \$page < \$lastPage,
+            ],
+            'data' => \$records
         ];
     }
 
-    /**
-     * Get {$moduleName} by ID
-     */
     public function getById(int \$id): ?array
     {
         \$model = Model::find(\$id);
         return \$model ? \$model->toArray() : null;
     }
 
-    /**
-     * Create {$moduleName}
-     */
     public function create(array \$data): array
     {
-        // 1. Validate & Hydrate using Model Attributes
-        // Throws ValidationException if invalid
-        \$model = Model::validate(\$data);
+        \$model = Model::create(\$data);
 
-        // 2. Save record
-        if (\$model->save()) {
+        if (\$model) {
             return [
                 'success' => true,
                 'data' => \$model->toArray()
@@ -348,9 +323,6 @@ class Service extends BaseService
         ];
     }
 
-    /**
-     * Update {$moduleName}
-     */
     public function update(int \$id, array \$data): array
     {
         \$model = Model::find(\$id);
@@ -362,14 +334,12 @@ class Service extends BaseService
             ];
         }
 
-        // 1. Manually update fields or re-validate partially?
-        // For updates, we often want to allow partial updates.
-        // Current Model::validate() enforces Required attributes.
-        // For now, let's manually bind. 
-        // TODO: Add Model::validatePartial() for updates.
+        \$allowedFields = ['name', 'status', 'description'];
         
         foreach (\$data as \$key => \$value) {
-            \$model->\$key = \$value;
+            if (in_array(\$key, \$allowedFields)) {
+                \$model->\$key = \$value;
+            }
         }
 
         if (\$model->save()) {
@@ -385,9 +355,6 @@ class Service extends BaseService
         ];
     }
 
-    /**
-     * Delete {$moduleName}
-     */
     public function delete(int \$id): array
     {
         \$model = Model::find(\$id);
@@ -419,28 +386,22 @@ $tableName = strtolower($moduleName);
 $modelContent = <<<PHP
 <?php
 
-namespace App\\Modules\\{$moduleName};
+namespace App\Modules\\{$moduleName};
 
-use App\\Core\\Model as BaseModel;
-use Frontend\\Palm\\Validation\\Attributes\\Required;
-use Frontend\\Palm\\Validation\\Attributes\\IsString;
+use App\Core\Model as BaseModel;
+use Frontend\Palm\Validation\Attributes\Required;
+use Frontend\Palm\Validation\Attributes\IsString;
 
-/**
- * {$moduleName} Model
- */
 class Model extends BaseModel
 {
     protected string \$table = '{$tableName}';
     
-    // Primary Key
     public int \$id;
 
-    // TODO: Add your fields here with Validation Attributes!
-    
     // #[Required]
     // #[IsString]
     // public string \$name;
-
+    
     public ?string \$created_at = null;
     public ?string \$updated_at = null;
 }
@@ -448,6 +409,11 @@ PHP;
 
 file_put_contents($modulePath . '/Model.php', $modelContent);
 echo "✅ Created: Model.php\n";
+
+// Generate API Docs
+if (class_exists('ApiDocGenerator')) {
+    ApiDocGenerator::generate($modulePath, $moduleName, $routePrefix);
+}
 
 echo "\n";
 echo "═══════════════════════════════════════════════════════════\n";
@@ -460,10 +426,6 @@ echo "\n📄 Files Generated:\n";
 echo "   ✅ Module.php       - Route registration\n";
 echo "   ✅ Controller.php   - HTTP request handlers\n";
 echo "   ✅ Service.php      - Business logic\n";
-echo "   ✅ Model.php        - Database model (ActiveRecord)\n";
-echo "\nNext steps:\n";
-echo "1. Update the table name in Model.php if needed\n";
-echo "2. Add field definitions in Model.php (optional - for IDE autocomplete)\n";
-echo "3. Add validation rules in Service.php\n";
-echo "4. Customize the controller methods as needed\n";
-echo "\n💡 Tip: Use 'palm make usetable <table_name>' to auto-generate from database!\n";
+echo "   ✅ Model.php        - Database model\n";
+echo "   ✅ API.md           - API Documentation\n";
+echo "\n";

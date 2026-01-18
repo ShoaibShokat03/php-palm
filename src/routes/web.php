@@ -1,10 +1,11 @@
 <?php
 
-use App\Modules\Users\Module as UserModule;
+use App\Modules\Users\Service as UserService;
 use Frontend\Palm\Route;
 use Frontend\Palm\PalmCache;
 use PhpPalm\Core\Request;
 use Frontend\Palm\Page;
+use App\Core\App;
 
 Route::get('/cache', function () {
     $cache = new PalmCache();
@@ -43,12 +44,10 @@ Route::post('/cache-clear', function () {
     $result = $cache->clear($target);
 
     if (isset($_POST['redirect']) && $_POST['redirect'] === 'cache') {
-        $query = http_build_query([
+        App::redirectToRoute('/cache', [
             'message' => $result['message'],
             'target' => $result['target'],
         ]);
-        header('Location: /cache?' . $query);
-        exit;
     }
 
     header('Content-Type: application/json; charset=UTF-8');
@@ -81,14 +80,96 @@ Route::get('/about', function () {
 
 // Users list page
 Route::get('/users', function () {
+    $service = new UserService();
+    $result = $service->getAll();
 
-    $users = UserModule::get("users");
+    $users = $result['data']->toArray();
+    $meta = $result['meta'];
 
     Route::render('home.users', [
         'title' => 'Users',
         'users' => $users,
+        'meta' => $meta,
     ]);
 }, 'users');
+
+// Create User Form
+Route::get('/users/create', function () {
+    Route::render('home.users_form', [
+        'title' => 'Create User',
+        'isEdit' => false,
+        'user' => [],
+    ]);
+}, 'users.create');
+
+// Store User
+Route::post('/users', function () {
+    $data = [
+        'name' => $_POST['name'] ?? '',
+        'email' => $_POST['email'] ?? '',
+        'role' => $_POST['role'] ?? 'user',
+    ];
+    $service = new UserService();
+    $result = $service->create($data);
+
+    if ($result['success']) {
+        App::redirectToRoute('/users');
+    }
+
+    // Handle error (simple redirect for now, ideally flash message)
+    Route::render('home.users_form', [
+        'title' => 'Create User',
+        'isEdit' => false,
+        'user' => $data,
+        'error' => $result['message'] ?? 'Failed to create user',
+    ]);
+}, 'users.store');
+
+
+// Edit User Form
+Route::get('/users/{id}/edit', function (int $id) {
+    $service = new UserService();
+    $user = $service->getById($id);
+
+    if (!$user) {
+        App::redirectToRoute('/users');
+    }
+
+    Route::render('home.users_form', [
+        'title' => 'Edit User',
+        'isEdit' => true,
+        'user' => $user,
+    ]);
+}, 'users.edit');
+
+// Update User
+Route::post('/users/{id}/update', function ($id) {
+    $data = [
+        'name' => $_POST['name'] ?? '',
+        'email' => $_POST['email'] ?? '',
+        'role' => $_POST['role'] ?? 'user',
+    ];
+    $service = new UserService();
+    $result = $service->update((int)$id, $data);
+
+    if ($result['success']) {
+        App::redirectToRoute('/users');
+    }
+
+    Route::render('home.users_form', [
+        'title' => 'Edit User',
+        'isEdit' => true,
+        'user' => array_merge($data, ['id' => $id]),
+        'error' => $result['message'] ?? 'Failed to update user',
+    ]);
+}, 'users.update');
+
+// Delete User
+Route::post('/users/{id}/delete', function ($id) {
+    $service = new UserService();
+    $service->delete((int)$id);
+    App::redirectToRoute('/users');
+}, 'users.delete');
 
 
 // Demo page
@@ -164,8 +245,7 @@ Route::get('/auth/google/callback', function () {
 
         // Redirect to dashboard or home
         $redirect = $_GET['redirect'] ?? '/';
-        header('Location: ' . $redirect);
-        exit;
+        App::redirect($redirect);
     } catch (\Exception $e) {
         Route::render('home.error', [
             'title' => 'Authentication Error',
@@ -177,6 +257,5 @@ Route::get('/auth/google/callback', function () {
 // Google logout
 Route::get('/auth/google/logout', function () {
     google_auth_logout();
-    header('Location: /');
-    exit;
+    App::redirectToRoute('/');
 }, 'auth.google.logout');

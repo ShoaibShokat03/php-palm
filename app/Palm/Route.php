@@ -602,13 +602,16 @@ class Route
         // Fast O(1) exact route lookup using array indexing
         // No loops - direct hash map access for maximum speed
         $method = strtoupper($method);
+
+        // Initialize params
+        $params = [];
+
         if (!isset(self::$routes[$method])) {
             http_response_code(404);
-            self::render('home.home', [
+            self::render('home.error', [
                 'title' => '404 - Page Not Found',
                 'message' => 'No route defined for ' . htmlspecialchars($path),
                 'suggested_routes' => [],
-                'all_routes' => self::$routes,
             ]);
             return;
         }
@@ -616,17 +619,42 @@ class Route
         // Direct array access - O(1) lookup, no iteration
         $route = self::$routes[$method][$path] ?? null;
 
+        // If exact match fails, try dynamic matching
+        if ($route === null) {
+            foreach (self::$routes[$method] as $routePath => $handlerData) {
+                // Check if route has parameters (contains braces)
+                if (strpos($routePath, '{') !== false) {
+                    // Use # as delimiter to avoid issues with forward slashes
+                    // Escape the route path for regex, using # as the delimiter
+                    $regexPath = preg_quote($routePath, '#');
+
+                    // Replace escaped parameters \{param\} with capture group ([^/]+)
+                    // Note: preg_quote escapes { and } to \{ and \}
+                    $regexPath = preg_replace('/\\\\\{[^}]+\\\\\}/', '([^/]+)', $regexPath);
+
+                    // Add start and end delimiters
+                    $pattern = '#^' . $regexPath . '$#';
+
+                    if (preg_match($pattern, $path, $matches)) {
+                        array_shift($matches); // Remove full match
+                        $route = $handlerData;
+                        $params = $matches;
+                        break;
+                    }
+                }
+            }
+        }
+
         if ($route === null) {
             http_response_code(404);
 
             // Find similar routes for suggestion (only called on 404)
             $suggestions = self::findSimilarRoutes($path, $method);
 
-            self::render('home.home', [
+            self::render('home.error', [
                 'title' => '404 - Page Not Found',
                 'message' => 'No route defined for ' . htmlspecialchars($path),
                 'suggested_routes' => $suggestions,
-                'all_routes' => self::$routes,
             ]);
             return;
         }
@@ -638,10 +666,10 @@ class Route
             $middleware = $route['middleware'] ?? [];
             // Execute middleware stack
             $finalHandler = self::executeMiddlewareStack($middleware, $handler);
-            $result = $finalHandler();
+            $result = $finalHandler(...$params);
         } else {
             // Old format - direct handler
-            $result = $route();
+            $result = $route(...$params);
         }
 
         // Auto-invoke ViewHandler if returned (enables both Route::view() and Route::render())
@@ -735,7 +763,10 @@ class Route
         // Generate ETag for view caching (production)
         $env = $_ENV['APP_ENV'] ?? $_SERVER['APP_ENV'] ?? 'production';
         if (strtolower($env) !== 'development' && strtolower($env) !== 'dev') {
-            $viewEtag = md5($slug . serialize($data) . filemtime($viewPath) . filemtime($layoutPath));
+            // Use json_encode instead of serialize to avoid closure serialization errors
+            // and handle potential encoding errors gracefully
+            $dataHash = md5(json_encode($data, JSON_PARTIAL_OUTPUT_ON_ERROR));
+            $viewEtag = md5($slug . $dataHash . filemtime($viewPath) . filemtime($layoutPath));
             require_once __DIR__ . '/ResponseOptimizer.php';
             ResponseOptimizer::etag($viewEtag);
 

@@ -123,11 +123,7 @@ function handleMakeCommand(string $target, string $baseDir, array $args): void
                 echo "Usage: palm make module <ModuleName> [route-prefix]\n";
                 exit(1);
             }
-            $params = [$moduleName];
-            if (isset($args[1])) {
-                $params[] = $args[1];
-            }
-            runPhpScript('make-module.php', $params);
+            runPhpScript('make-module.php', $args);
             break;
         case 'controller':
             $moduleName = $args[0] ?? null;
@@ -193,6 +189,15 @@ function handleMakeCommand(string $target, string $baseDir, array $args): void
         case 'security:policy':
             handleMakeSecurityPolicy($baseDir, $args);
             break;
+        case 'api':
+            $subCmd = $args[0] ?? '';
+            if ($subCmd === 'docs') {
+                runPhpScript('make-api-docs.php', $args);
+            } else {
+                echo "Unknown api command. Usage: palm make api docs <Module>\n";
+                exit(1);
+            }
+            break;
         default:
             echo "Unknown make target: {$target}\n";
             showMakeUsage();
@@ -231,20 +236,13 @@ function scaffoldFrontend(string $baseDir): void
     recursiveCreate($viewsDir);
     recursiveCreate($assetsDir);
 
-    // Create live-reload.js file (WebSocket-based, no HTTP requests)
-    $liveReloadJs = getLiveReloadScript();
-    $liveReloadJsPath = $assetsDir . '/live-reload.js';
-
     $files = [
         $routesDir . '/web.php' => getMainTemplate(),
         $layoutDir . '/main.php' => getLayoutTemplate(),
         $viewsDir . '/index.palm.php' => getHomeTemplate(),
-        $viewsDir . '/demo.palm.php' => getDemoTemplate(),
         $viewsDir . '/about.palm.php' => getAboutTemplate(),
         $viewsDir . '/contact.palm.php' => getContactTemplate(),
-        $viewsDir . '/cache.palm.php' => getCacheTemplate(),
         $assetsDir . '/layout.css' => getLayoutCssTemplate(),
-        $liveReloadJsPath => $liveReloadJs,
     ];
 
     foreach ($files as $path => $content) {
@@ -294,15 +292,8 @@ function scaffoldFrontend(string $baseDir): void
     echo "   - src/routes/web.php (frontend entry)\n";
     echo "   - src/layouts/main.php (clean HTML/PHP layout)\n";
     echo "   - src/views/home/*.palm.php (reactive component views)\n";
-    echo "   - src/assets/ (assets: CSS, JS, live-reload script)\n";
-    echo "\n🔥 Hot Reload System:\n";
-    echo "   - WebSocket-based real-time communication (no HTTP requests!)\n";
-    echo "   - Background file watcher monitors changes\n";
-    echo "   - WebSocket server broadcasts changes instantly\n";
-    echo "   - Automatic browser reload on file changes\n";
-    echo "   - Zero HTTP polling - pure WebSocket connection\n";
+    echo "   - src/assets/ (CSS assets)\n";
     echo "\n🚀 Run 'palm serve' to start the development server!\n";
-    echo "💡 Tip: Set HOT_RELOAD_ENABLED=true in config/.env to enable hot reload\n";
 }
 
 function recursiveCreate(string $path): void
@@ -320,55 +311,7 @@ function getMainTemplate(): string
 
 use Frontend\Palm\Route;
 use Frontend\Palm\PalmCache;
-
-Route::get('/cache', function () {
-    $cache = new PalmCache();
-
-    Route::render('home.cache', [
-        'title' => 'Palm Cache Manager',
-        'summary' => $cache->summary(),
-        'recentFiles' => $cache->recentFiles(),
-        'message' => $_GET['message'] ?? null,
-    ]);
-});
-
-Route::get('/cache-clear', function () {
-    $target = $_GET['target'] ?? 'all';
-    $format = strtolower($_GET['format'] ?? '');
-    $cache = new PalmCache();
-    $result = $cache->clear($target);
-
-    if ($format === 'html') {
-        Route::render('home.cache', [
-            'title' => 'Palm Cache Manager',
-            'summary' => $result['summary'],
-            'recentFiles' => $result['recent_files'],
-            'message' => $result['message'],
-        ]);
-        return;
-    }
-
-    header('Content-Type: application/json; charset=UTF-8');
-    echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-});
-
-Route::post('/cache-clear', function () {
-    $target = $_POST['target'] ?? 'all';
-    $cache = new PalmCache();
-    $result = $cache->clear($target);
-
-    if (isset($_POST['redirect']) && $_POST['redirect'] === 'cache') {
-        $query = http_build_query([
-            'message' => $result['message'],
-            'target' => $result['target'],
-        ]);
-        header('Location: /cache?' . $query);
-        exit;
-    }
-
-    header('Content-Type: application/json; charset=UTF-8');
-    echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-});
+use App\Core\App;
 
 // Home page
 Route::get('/', Route::view('home.index', [
@@ -391,8 +334,9 @@ Route::get('/contact', Route::view('home.contact', [
 Route::post('/contact', function () {
     require_once dirname(__DIR__, 2) . '/app/Palm/helpers.php';
     
-    $name = trim($_POST['name'] ?? '');
-    $message = trim($_POST['message'] ?? '');
+    $request = App::request();
+    $name = trim($request->post('name') ?? '');
+    $message = trim($request->post('message') ?? '');
 
     if (empty($name) || empty($message)) {
         Route::render('home.contact', [
@@ -409,12 +353,6 @@ Route::post('/contact', function () {
         'prefill' => ['name' => '', 'message' => ''],
     ]);
 }, 'contact.submit');
-
-// Demo page
-Route::get('/demo', Route::view('home.demo', [
-    'title' => 'Demo Page',
-    'message' => 'Playground for Palm experiments',
-]), 'demo');
 
 // Google Auth routes (automatically initialized in index.php)
 // Google login - redirect to Google
@@ -435,7 +373,7 @@ Route::get('/auth/google/callback', function () {
         $user = \Frontend\Palm\GoogleAuth::handleCallback();
         
         // Redirect to dashboard or home
-        $redirect = $_GET['redirect'] ?? '/';
+        $redirect = App::request()->get('redirect') ?? '/';
         header('Location: ' . $redirect);
         exit;
     } catch (\Exception $e) {
@@ -458,8 +396,20 @@ MAIN;
 function getLayoutTemplate(): string
 {
     return <<<'LAYOUT'
+<?php
+
+use Frontend\Palm\Page;
+use Frontend\Palm\FastRender;
+use App\Core\App;
+
+// Initialize fast rendering - browser will receive head section immediately
+FastRender::startHead();
+?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="<?= $lang ?? 'en' ?>">
+<?php 
+FastRender::endHead(); // FLUSH HEAD TO BROWSER - CSS starts loading immediately 
+?>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -467,7 +417,8 @@ function getLayoutTemplate(): string
     <meta name="description" content="<?= htmlspecialchars($meta['description'] ?? 'Modern PHP Framework') ?>">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"></noscript>
     <style>
         * {
             margin: 0;
@@ -906,7 +857,7 @@ function getLayoutTemplate(): string
 <body>
     <header>
         <div class="header-container">
-            <a href="/" class="logo">
+            <a href="<?= App::route('/') ?>" class="logo">
                 <div class="logo-icon">🌴</div>
                 <span>PHP Palm</span>
             </a>
@@ -917,11 +868,12 @@ function getLayoutTemplate(): string
                     <line x1="3" y1="18" x2="21" y2="18"></line>
                 </svg>
             </button>
-            <nav id="mainNav">
-                <a href="/" class="<?= ($currentPath ?? '/') === '/' ? 'is-active' : '' ?>">Home</a>
-                <a href="/about" class="<?= ($currentPath ?? '') === '/about' ? 'is-active' : '' ?>">About</a>
-                <a href="/contact" class="<?= ($currentPath ?? '') === '/contact' ? 'is-active' : '' ?>">Contact</a>
-                <a href="/demo" class="<?= ($currentPath ?? '') === '/demo' ? 'is-active' : '' ?>">Demo</a>
+            <nav id="mainNav" role="navigation" aria-label="Main Navigation">
+                <a href="<?= App::route('/') ?>" class="<?= ($currentPath ?? '/') === '/' ? 'is-active' : '' ?>" <?= ($currentPath ?? '/') === '/' ? 'aria-current="page"' : '' ?>>Home</a>
+                <a href="<?= App::route('/about') ?>" class="<?= ($currentPath ?? '') === '/about' ? 'is-active' : '' ?>" <?= ($currentPath ?? '') === '/about' ? 'aria-current="page"' : '' ?>>About</a>
+                <a href="<?= App::route('/contact') ?>" class="<?= ($currentPath ?? '') === '/contact' ? 'is-active' : '' ?>" <?= ($currentPath ?? '') === '/contact' ? 'aria-current="page"' : '' ?>>Contact</a>
+                <a href="<?= App::route('/demo') ?>" class="<?= ($currentPath ?? '') === '/demo' ? 'is-active' : '' ?>" <?= ($currentPath ?? '') === '/demo' ? 'aria-current="page"' : '' ?>>Demo</a>
+                <a href="<?= App::route('/users') ?>" class="<?= ($currentPath ?? '') === '/users' ? 'is-active' : '' ?>" <?= ($currentPath ?? '') === '/users' ? 'aria-current="page"' : '' ?>>Users</a>
             </nav>
         </div>
     </header>
@@ -989,9 +941,9 @@ $pageTitle = 'Home';
     <div class="demo-section">
         <h3>Quick Links</h3>
         <ul>
-            <li><a href="/about">About</a> - Learn more about PHP Palm</li>
-            <li><a href="/contact">Contact</a> - Get in touch</li>
-            <li><a href="/demo">Demo</a> - See examples</li>
+            <li><a href="<?= \App\Core\App::route('/about') ?>">About</a> - Learn more about PHP Palm</li>
+            <li><a href="<?= \App\Core\App::route('/contact') ?>">Contact</a> - Get in touch</li>
+            <li><a href="<?= \App\Core\App::route('/demo') ?>">Demo</a> - See examples</li>
         </ul>
     </div>
 </div>
@@ -1106,9 +1058,9 @@ function getDemoTemplate(): string
         <h3>Navigation</h3>
         <p>Use the navigation links in the header to explore other pages:</p>
         <ul>
-            <li><a href="/">Home</a></li>
-            <li><a href="/about">About</a></li>
-            <li><a href="/contact">Contact</a></li>
+            <li><a href="<?= \App\Core\App::route('/') ?>">Home</a></li>
+            <li><a href="<?= \App\Core\App::route('/about') ?>">About</a></li>
+            <li><a href="<?= \App\Core\App::route('/contact') ?>">Contact</a></li>
         </ul>
     </div>
 </div>

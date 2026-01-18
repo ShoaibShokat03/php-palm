@@ -1,7 +1,11 @@
 <?php
 
 use Frontend\Palm\Page;
+use Frontend\Palm\FastRender;
+use App\Core\App;
 
+// Initialize fast rendering - browser will receive head section immediately
+FastRender::startHead();
 ?>
 <!DOCTYPE html>
 <html lang="<?= $lang ?? 'en' ?>">
@@ -11,10 +15,15 @@ use Frontend\Palm\Page;
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <?= $metaTags ?>
 
-
+    <!-- Preconnect to external domains for faster loading -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Optimized font loading with display=swap for faster rendering -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+    <noscript>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    </noscript>
     <style>
         * {
             margin: 0;
@@ -23,57 +32,33 @@ use Frontend\Palm\Page;
         }
 
         :root {
-            /* Palm Theme - Tropical Color Palette */
             --color-primary: #10b981;
-            /* Emerald green - palm leaves */
             --color-primary-dark: #059669;
-            /* Deep emerald */
             --color-primary-light: #34d399;
-            /* Light emerald */
             --color-secondary: #f59e0b;
-            /* Sandy gold - beach sand */
             --color-accent: #06b6d4;
-            /* Ocean turquoise */
-
-            /* Neutral Colors */
             --color-bg: #f0fdf4;
-            /* Very light mint */
             --color-bg-alt: #dcfce7;
-            /* Light mint */
             --color-surface: #ffffff;
             --color-border: #d1fae5;
-            /* Mint border */
-
-            /* Text Colors */
             --color-text: #064e3b;
-            /* Deep forest green */
             --color-text-light: #047857;
-            /* Forest green */
             --color-text-muted: #6ee7b7;
-            /* Light emerald */
-
-            /* Shadows */
             --shadow-sm: 0 1px 2px 0 rgb(16 185 129 / 0.05);
             --shadow-md: 0 4px 6px -1px rgb(16 185 129 / 0.1);
             --shadow-lg: 0 10px 15px -3px rgb(16 185 129 / 0.1);
             --shadow-xl: 0 20px 25px -5px rgb(16 185 129 / 0.1);
-
-            /* Spacing */
             --spacing-xs: 0.5rem;
             --spacing-sm: 0.75rem;
             --spacing-md: 1rem;
             --spacing-lg: 1.5rem;
             --spacing-xl: 2rem;
             --spacing-2xl: 3rem;
-
-            /* Border Radius */
             --radius-sm: 0.375rem;
             --radius-md: 0.5rem;
             --radius-lg: 0.75rem;
             --radius-xl: 1rem;
             --radius-full: 9999px;
-
-            /* Transitions */
             --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
             --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
             --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -486,13 +471,16 @@ use Frontend\Palm\Page;
         }
     </style>
 </head>
+<?php
+FastRender::endHead(); // FLUSH HEAD TO BROWSER - CSS starts loading immediately 
+?>
 
 <body>
     <a href="#main-content" class="skip-link">Skip to main content</a>
 
     <header role="banner">
         <div class="header-container">
-            <a href="/" class="logo">
+            <a href="<?= App::route('/') ?>" class="logo">
                 <div class="logo-icon">🌴</div>
                 <span>PHP Palm</span>
             </a>
@@ -504,11 +492,11 @@ use Frontend\Palm\Page;
                 </svg>
             </button>
             <nav id="mainNav" role="navigation" aria-label="Main Navigation">
-                <a href="/" class="<?= ($currentPath ?? '/') === '/' ? 'is-active' : '' ?>" <?= ($currentPath ?? '/') === '/' ? 'aria-current="page"' : '' ?>>Home</a>
-                <a href="/about" class="<?= ($currentPath ?? '') === '/about' ? 'is-active' : '' ?>" <?= ($currentPath ?? '') === '/about' ? 'aria-current="page"' : '' ?>>About</a>
-                <a href="/contact" class="<?= ($currentPath ?? '') === '/contact' ? 'is-active' : '' ?>" <?= ($currentPath ?? '') === '/contact' ? 'aria-current="page"' : '' ?>>Contact</a>
-                <a href="/demo" class="<?= ($currentPath ?? '') === '/demo' ? 'is-active' : '' ?>" <?= ($currentPath ?? '') === '/demo' ? 'aria-current="page"' : '' ?>>Demo</a>
-                <a href="/users" class="<?= ($currentPath ?? '') === '/users' ? 'is-active' : '' ?>" <?= ($currentPath ?? '') === '/users' ? 'aria-current="page"' : '' ?>>Users</a>
+                <a href="<?= App::route('/') ?>" class="<?= ($currentPath ?? '/') === '/' ? 'is-active' : '' ?>" <?= ($currentPath ?? '/') === '/' ? 'aria-current="page"' : '' ?>>Home</a>
+                <a href="<?= App::route('/about') ?>" class="<?= ($currentPath ?? '') === '/about' ? 'is-active' : '' ?>" <?= ($currentPath ?? '') === '/about' ? 'aria-current="page"' : '' ?>>About</a>
+                <a href="<?= App::route('/contact') ?>" class="<?= ($currentPath ?? '') === '/contact' ? 'is-active' : '' ?>" <?= ($currentPath ?? '') === '/contact' ? 'aria-current="page"' : '' ?>>Contact</a>
+                <a href="<?= App::route('/demo') ?>" class="<?= ($currentPath ?? '') === '/demo' ? 'is-active' : '' ?>" <?= ($currentPath ?? '') === '/demo' ? 'aria-current="page"' : '' ?>>Demo</a>
+                <a href="<?= App::route('/users') ?>" class="<?= ($currentPath ?? '') === '/users' ? 'is-active' : '' ?>" <?= ($currentPath ?? '') === '/users' ? 'aria-current="page"' : '' ?>>Users</a>
             </nav>
         </div>
     </header>
@@ -550,3 +538,6 @@ use Frontend\Palm\Page;
 </body>
 
 </html>
+<?php
+// FastRender::end(); // Complete fast rendering 
+?>
