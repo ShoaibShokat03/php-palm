@@ -327,8 +327,9 @@ try {
 
     // Pre-compute route path early (used later for direct routing)
     $basePath = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'])), '/');
+    // Don't strip /api - routes are registered with full paths like /api/auth/login
     // Use $requestPath (without query string) instead of $requestUri
-    $targetRoutePath = str_replace($basePath . "/api", '', $requestPath);
+    $targetRoutePath = str_replace($basePath, '', $requestPath);
     $targetRoutePath = rtrim($targetRoutePath, '/');
     if (empty($targetRoutePath)) {
         $targetRoutePath = '/';

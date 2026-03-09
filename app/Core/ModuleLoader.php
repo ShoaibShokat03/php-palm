@@ -39,12 +39,26 @@ class ModuleLoader
                 $className = "App\\Modules\\{$moduleName}\\Module";
 
                 if (class_exists($className)) {
-                    $module = Container::getInstance()->make($className);
+                    // Manual instantiation to pass constructor arguments
+                    $prefix = '/' . strtolower($moduleName);
+                    // Check if class has custom constructor or inherits from base Module
+                    try {
+                        $module = new $className($moduleName, $prefix);
+                    } catch (\ArgumentCountError $e) {
+                        // Fallback if constructor signature is different (e.g. no params)
+                        $module = Container::getInstance()->make($className);
+                    }
+
                     if ($module instanceof Module) {
                         $this->modules[] = $module;
                         // Set source for conflict detection
                         Route::setSource("module:{$moduleName}");
-                        $module->registerRoutes();
+
+                        // Auto-prefix routes with /api/module-name
+                        $prefix = '/api' . $module->getPrefix();
+                        Route::group($prefix, function () use ($module) {
+                            $module->registerRoutes();
+                        });
                     }
                 }
             } else {

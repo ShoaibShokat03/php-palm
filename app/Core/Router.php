@@ -125,7 +125,8 @@ class Router
     public function prepareRoutePath(string $uri): string
     {
         $basePath = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'])), '/');
-        $targetRoute = str_replace($basePath . "/api", '', $uri);
+        // Don't strip /api - routes are registered with full paths like /api/auth/login
+        $targetRoute = str_replace($basePath, '', $uri);
         return $this->normalizePath($targetRoute);
     }
 

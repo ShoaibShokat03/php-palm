@@ -2176,28 +2176,64 @@ function handleRouteCommand(string $command, string $baseDir): void
     require_once $baseDir . '/app/Palm/RouteCache.php';
 
     if ($command === 'route:list') {
+        // --- Frontend Routes ---
         require_once $baseDir . '/app/Palm/Route.php';
         \Frontend\Palm\Route::init($baseDir . '/src');
-        require $baseDir . '/src/routes/main.php';
+
+        if (file_exists($baseDir . '/src/routes/web.php')) {
+            require $baseDir . '/src/routes/web.php';
+        } elseif (file_exists($baseDir . '/src/routes/main.php')) {
+            require $baseDir . '/src/routes/main.php';
+        }
 
         $routes = \Frontend\Palm\Route::all();
         $names = \Frontend\Palm\Route::names();
 
-        echo colorText("Registered Routes:\n", 'cyan');
+        echo colorText("Frontend Routes (Web):\n", 'cyan');
         echo str_repeat('=', 80) . "\n";
 
         foreach ($routes as $method => $methodRoutes) {
-            echo colorText("\n{$method} Routes:\n", 'yellow');
             foreach ($methodRoutes as $path => $handler) {
                 $name = array_search(['method' => $method, 'path' => $path], $names);
                 $nameStr = $name ? colorText(" [{$name}]", 'green') : '';
-                echo "  " . colorText($path, 'cyan') . $nameStr . "\n";
+                echo "  " . colorText(str_pad($method, 7), 'yellow') . colorText($path, 'white') . $nameStr . "\n";
             }
         }
 
+        // --- Backend Routes ---
+        echo "\n" . colorText("Backend Routes (API):\n", 'cyan');
+        echo str_repeat('=', 80) . "\n";
+
+        // Load modules to register routes
+        $moduleLoader = new \App\Core\ModuleLoader($baseDir . '/modules');
+        $moduleLoader->loadModules();
+
+        $router = \PhpPalm\Core\Route::getRouter();
+        if ($router) {
+            $backendRoutes = $router->getRoutes();
+
+            // Group by method for cleaner output
+            $byMethod = [];
+            foreach ($backendRoutes as $route) {
+                $byMethod[$route['method']][] = $route;
+            }
+
+            foreach ($byMethod as $method => $methodRoutes) {
+                foreach ($methodRoutes as $route) {
+                    $path = $route['raw'];
+                    $source = $route['source'] ?? 'api';
+                    $sourceStr = colorText(" ({$source})", 'gray');
+                    echo "  " . colorText(str_pad($method, 7), 'yellow') . colorText($path, 'white') . $sourceStr . "\n";
+                }
+            }
+
+            $totalBackend = count($backendRoutes);
+            echo "\nTotal API Routes: {$totalBackend}\n";
+        } else {
+            echo "  No API routes registered.\n";
+        }
+
         echo "\n" . str_repeat('=', 80) . "\n";
-        $total = (count($routes['GET'] ?? [])) + (count($routes['POST'] ?? []));
-        echo "Total: {$total} routes\n";
     } elseif ($command === 'route:clear') {
         \Frontend\Palm\RouteCache::init($baseDir);
         if (\Frontend\Palm\RouteCache::clear()) {

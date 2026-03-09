@@ -7,6 +7,7 @@ use PhpPalm\Core\Router;
 class Route
 {
     protected static ?Router $router = null;
+    protected static array $groupStack = [];
 
     public static function init(): void
     {
@@ -15,34 +16,59 @@ class Route
         }
     }
 
+    public static function group(string $prefix, callable $callback): void
+    {
+        self::$groupStack[] = $prefix;
+        $callback();
+        array_pop(self::$groupStack);
+    }
+
+    protected static function getGroupPrefix(): string
+    {
+        return implode('', self::$groupStack);
+    }
+
+    protected static function applyPrefix(string $path): string
+    {
+        $prefix = self::getGroupPrefix();
+        if (empty($prefix)) {
+            return $path;
+        }
+
+        // Ensure standard / separator
+        $path = $prefix . '/' . ltrim($path, '/');
+        // Remove double slashes
+        return preg_replace('#/+#', '/', $path);
+    }
+
     public static function get(string $path, callable|array $handler, ?string $name = null): void
     {
         self::init();
-        self::$router->add('GET', $path, $handler, null, $name);
+        self::$router->add('GET', self::applyPrefix($path), $handler, null, $name);
     }
 
     public static function post(string $path, callable|array $handler, ?string $name = null): void
     {
         self::init();
-        self::$router->add('POST', $path, $handler, null, $name);
+        self::$router->add('POST', self::applyPrefix($path), $handler, null, $name);
     }
 
     public static function put(string $path, callable|array $handler, ?string $name = null): void
     {
         self::init();
-        self::$router->add('PUT', $path, $handler, null, $name);
+        self::$router->add('PUT', self::applyPrefix($path), $handler, null, $name);
     }
 
     public static function delete(string $path, callable|array $handler, ?string $name = null): void
     {
         self::init();
-        self::$router->add('DELETE', $path, $handler, null, $name);
+        self::$router->add('DELETE', self::applyPrefix($path), $handler, null, $name);
     }
 
     public static function patch(string $path, callable|array $handler, ?string $name = null): void
     {
         self::init();
-        self::$router->add('PATCH', $path, $handler, null, $name);
+        self::$router->add('PATCH', self::applyPrefix($path), $handler, null, $name);
     }
 
     /**
@@ -79,11 +105,11 @@ class Route
             self::init();
             $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
             $uri    = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
-            
+
             if (empty($uri)) {
                 $uri = '/';
             }
-            
+
             return self::$router->dispatch($method, $uri);
         } catch (\Throwable $e) {
             http_response_code(500);
@@ -97,4 +123,3 @@ class Route
         }
     }
 }
-

@@ -20,7 +20,7 @@ class ApplicationBootstrap
     private static string $cacheFile;
     private static string $cacheDir;
     private static bool $cacheEnabled = true;
-    
+
     /**
      * Initialize bootstrap cache
      */
@@ -29,20 +29,20 @@ class ApplicationBootstrap
         if ($cacheDir === null) {
             $cacheDir = dirname(__DIR__, 2) . '/storage/cache';
         }
-        
+
         self::$cacheDir = $cacheDir;
         self::$cacheFile = $cacheDir . '/bootstrap.cache.php';
-        
+
         // Create cache directory if it doesn't exist
         if (!is_dir($cacheDir)) {
             @mkdir($cacheDir, 0755, true);
         }
-        
+
         // Check if cache is enabled via environment
         $cacheEnabled = $_ENV['APP_CACHE_ENABLED'] ?? 'true';
         self::$cacheEnabled = filter_var($cacheEnabled, FILTER_VALIDATE_BOOLEAN);
     }
-    
+
     /**
      * Load or build application state
      */
@@ -51,30 +51,30 @@ class ApplicationBootstrap
         if (self::$cachedState !== null) {
             return self::$cachedState;
         }
-        
+
         // Always build fresh state (routes can't be cached due to callables)
         // But we can use cache to skip conflict checking if cache is valid
         $useCachedConflicts = false;
         $cachedConflictData = null;
-        
+
         if (self::$cacheEnabled && self::isCacheValid()) {
             $cachedConflictData = self::loadFromCache();
             if ($cachedConflictData !== null && !($cachedConflictData['has_conflicts'] ?? false)) {
                 $useCachedConflicts = true;
             }
         }
-        
+
         // Build fresh state (always load routes)
         self::$cachedState = self::buildState($useCachedConflicts, $cachedConflictData);
-        
+
         // Save conflict data to cache (routes can't be serialized)
         if (self::$cacheEnabled) {
             self::saveToCache(self::$cachedState);
         }
-        
+
         return self::$cachedState;
     }
-    
+
     /**
      * Build application state (routes, modules, middlewares)
      */
@@ -82,13 +82,13 @@ class ApplicationBootstrap
     {
         // Initialize router
         Route::init();
-        
+
         // Load environment variables (only if not already loaded)
         if (!isset($_ENV['APP_ENV'])) {
             $dotenv = Dotenv::createImmutable(dirname(__DIR__, 2) . '/config/');
             $dotenv->load();
         }
-        
+
         // Load middlewares
         $middlewareLoader = new MiddlewareLoader();
         try {
@@ -96,14 +96,17 @@ class ApplicationBootstrap
         } catch (\Throwable $e) {
             error_log('Middleware loading error: ' . $e->getMessage());
         }
-        
-        // Load routes from api.php
+
+        // Load routes from api.php (wrapped in /api group)
         $routesFile = dirname(__DIR__, 2) . '/routes/api.php';
         if (file_exists($routesFile)) {
             Route::setSource('api.php');
-            require $routesFile;
+            // Wrap api.php routes in /api group to match isApiRequest check
+            Route::group('/api', function () use ($routesFile) {
+                require $routesFile;
+            });
         }
-        
+
         // Load modules
         $moduleLoader = new ModuleLoader();
         try {
@@ -111,12 +114,12 @@ class ApplicationBootstrap
         } catch (\Throwable $e) {
             error_log('Module loading error: ' . $e->getMessage());
         }
-        
+
         // Check for route conflicts (skip if using cached result)
         $router = Route::getRouter();
         $hasConflicts = false;
         $conflicts = [];
-        
+
         if ($useCachedConflicts && $cachedData !== null) {
             // Use cached conflict data
             $hasConflicts = $cachedData['has_conflicts'] ?? false;
@@ -127,7 +130,7 @@ class ApplicationBootstrap
                 $conflictChecker = new RouteConflictChecker($router);
                 $conflicts = $conflictChecker->checkConflicts();
                 $hasConflicts = $conflictChecker->hasConflicts();
-                
+
                 if ($hasConflicts) {
                     error_log("ROUTE CONFLICTS DETECTED:\n" . $conflictChecker->getConflictReport());
                 }
@@ -135,10 +138,10 @@ class ApplicationBootstrap
                 error_log('Route conflict check error: ' . $e->getMessage());
             }
         }
-        
+
         // Get all routes (for reference, but not cached)
         $routes = $router !== null ? $router->getRoutes() : [];
-        
+
         return [
             'routes' => $routes,
             'has_conflicts' => $hasConflicts,
@@ -147,7 +150,7 @@ class ApplicationBootstrap
             'router' => $router
         ];
     }
-    
+
     /**
      * Check if cache is valid
      */
@@ -156,19 +159,19 @@ class ApplicationBootstrap
         if (!file_exists(self::$cacheFile)) {
             return false;
         }
-        
+
         // Check cache age (default: 1 hour, configurable)
         $cacheLifetime = (int)($_ENV['APP_CACHE_LIFETIME'] ?? 3600);
         $cacheAge = time() - filemtime(self::$cacheFile);
-        
+
         if ($cacheAge > $cacheLifetime) {
             return false;
         }
-        
+
         // Check if source files have changed
         return self::checkSourceFilesUnchanged();
     }
-    
+
     /**
      * Check if source files have changed since cache was created
      */
@@ -176,7 +179,7 @@ class ApplicationBootstrap
     {
         $cacheTime = filemtime(self::$cacheFile);
         $baseDir = dirname(__DIR__, 2);
-        
+
         // Check key files that would invalidate cache
         $filesToCheck = [
             $baseDir . '/routes/api.php',
@@ -184,7 +187,7 @@ class ApplicationBootstrap
             $baseDir . '/app/Core/ModuleLoader.php',
             $baseDir . '/app/Core/MiddlewareLoader.php',
         ];
-        
+
         foreach ($filesToCheck as $file) {
             if (is_file($file) && filemtime($file) > $cacheTime) {
                 return false;
@@ -195,7 +198,7 @@ class ApplicationBootstrap
                     new \RecursiveDirectoryIterator($file, \RecursiveDirectoryIterator::SKIP_DOTS),
                     \RecursiveIteratorIterator::SELF_FIRST
                 );
-                
+
                 foreach ($iterator as $item) {
                     if ($item->isFile() && $item->getMTime() > $cacheTime) {
                         return false;
@@ -203,10 +206,10 @@ class ApplicationBootstrap
                 }
             }
         }
-        
+
         return true;
     }
-    
+
     /**
      * Load state from cache
      */
@@ -215,15 +218,15 @@ class ApplicationBootstrap
         if (!file_exists(self::$cacheFile)) {
             return null;
         }
-        
+
         try {
             $data = include self::$cacheFile;
-            
+
             // Note: Routes are not restored from cache because handlers (callables/arrays)
             // cannot be serialized. Instead, we'll rebuild routes but use cached conflict check.
             // The actual route loading happens in buildState() but we skip it if cache is valid.
             // For now, we return null to force rebuild, but keep conflict data.
-            
+
             // Actually, we need to rebuild routes because callables can't be cached
             // But we can cache the fact that there are no conflicts
             return $data;
@@ -232,7 +235,7 @@ class ApplicationBootstrap
             return null;
         }
     }
-    
+
     /**
      * Save state to cache
      */
@@ -246,14 +249,14 @@ class ApplicationBootstrap
                 'built_at' => $state['built_at'],
                 'route_count' => count($state['routes'] ?? [])
             ];
-            
+
             $content = "<?php\nreturn " . var_export($cacheData, true) . ";\n";
             file_put_contents(self::$cacheFile, $content, LOCK_EX);
         } catch (\Throwable $e) {
             error_log('Cache save error: ' . $e->getMessage());
         }
     }
-    
+
     /**
      * Clear cache
      */
@@ -264,7 +267,7 @@ class ApplicationBootstrap
         }
         self::$cachedState = null;
     }
-    
+
     /**
      * Get cached state
      */
@@ -272,7 +275,7 @@ class ApplicationBootstrap
     {
         return self::$cachedState;
     }
-    
+
     /**
      * Check if cache is enabled
      */
@@ -281,4 +284,3 @@ class ApplicationBootstrap
         return self::$cacheEnabled;
     }
 }
-
