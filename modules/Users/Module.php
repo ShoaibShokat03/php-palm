@@ -16,10 +16,10 @@ class Module extends BaseModule
     public function registerRoutes(): void
     {
         $c = new Controller();
-        Route::get('/users', [$c, 'index']);
-        Route::get('/users/{id}', [$c, 'show']);
-        Route::post('/users', [$c, 'store']);
-        Route::put('/users/{id}', [$c, 'update']);
-        Route::delete('/users/{id}', [$c, 'destroy']);
+        Route::get('/', [$c, 'index']);
+        Route::get('/{id}', [$c, 'show']);
+        Route::post('/', [$c, 'store']);
+        Route::put('/{id}', [$c, 'update']);
+        Route::delete('/{id}', [$c, 'destroy']);
     }
 }
