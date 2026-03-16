@@ -373,8 +373,8 @@ class Route
             $middlewareInstance = self::resolveMiddleware($middlewareItem);
             if ($middlewareInstance instanceof MiddlewareInterface) {
                 $currentNext = $next;
-                $next = function () use ($middlewareInstance, $currentNext) {
-                    return $middlewareInstance->handle($currentNext);
+                $next = function (...$args) use ($middlewareInstance, $currentNext) {
+                    return $middlewareInstance->handle($currentNext, ...$args);
                 };
             }
         }

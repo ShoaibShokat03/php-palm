@@ -100,6 +100,24 @@ class PageMeta
     }
 
     /**
+     * Set robots
+     */
+    public function robots(string $robots): self
+    {
+        $this->robots = $robots;
+        return $this;
+    }
+
+    /**
+     * Set author
+     */
+    public function author(string $author): self
+    {
+        $this->author = $author;
+        return $this;
+    }
+
+    /**
      * Add custom meta tag
      */
     public function addMeta(string $name, string $content, string $type = 'name'): self

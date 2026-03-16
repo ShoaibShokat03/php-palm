@@ -49,5 +49,49 @@ return [
     // HTTP status code for blocked requests
     // Common codes: 403 (Forbidden), 404 (Not Found - hides existence), 401 (Unauthorized)
     'error_code' => 403,
-];
 
+    // ==========================================
+    // GLOBAL APPLICATION ACCESS CONTROL
+    // ==========================================
+
+    // Global IP Blocklist
+    // Any IP listed here will be completely blocked from accessing the ENTIRE application
+    'global_blocklist' => [
+        // '192.168.1.50',
+        // '203.0.113.10',
+    ],
+
+    // Global IP Whitelist
+    // If this array is NOT empty, ONLY the IPs listed here will be able to access the application
+    // Warning: Leaving this empty disables the whitelist. If you add an IP, all others are blocked!
+    'global_whitelist' => [
+        // '127.0.0.1',
+        // '::1',
+    ],
+
+    // ==========================================
+    // CONTENT SECURITY POLICY (CSP) SETTINGS
+    // ==========================================
+    
+    // Enable Content Security Policy (link security)
+    // Set to false to entirely disable CSP blocking for the application.
+    'enable_csp' => false,
+    
+    // Allowed external domains for scripts (e.g., CDNs, analytics)
+    'csp_allowed_scripts' => [
+        'https://cdn.jsdelivr.net',
+    ],
+
+    // Allowed external domains for styles (e.g., Google Fonts, FontAwesome)
+    'csp_allowed_styles' => [
+        'https://fonts.googleapis.com',
+        'https://cdnjs.cloudflare.com',
+        'https://cdn.jsdelivr.net',
+    ],
+
+    // Allowed external domains for fonts
+    'csp_allowed_fonts' => [
+        'https://fonts.gstatic.com',
+        'https://cdnjs.cloudflare.com',
+    ],
+];

@@ -2265,13 +2265,21 @@ function handleSitemapCommand(string $baseDir): void
 
     // Initialize routes
     \Frontend\Palm\Route::init($baseDir . '/src');
-    require $baseDir . '/src/routes/main.php';
+    
+    if (file_exists($baseDir . '/src/routes/web.php')) {
+        require $baseDir . '/src/routes/web.php';
+    } elseif (file_exists($baseDir . '/src/routes/main.php')) {
+        require $baseDir . '/src/routes/main.php';
+    }
 
     // Get all routes
     $routes = \Frontend\Palm\Route::all();
 
     // Initialize sitemap generator
-    $baseUrl = $_ENV['APP_URL'] ?? 'http://localhost';
+    $configPath = $baseDir . '/config/app.config.php';
+    $appConfig = file_exists($configPath) ? require $configPath : [];
+    $baseUrl = $appConfig['url'] ?? $_ENV['APP_URL'] ?? 'http://localhost';
+    
     \Frontend\Palm\SitemapGenerator::init($baseDir, $baseUrl);
     \Frontend\Palm\SitemapGenerator::setRoutes($routes);
 
@@ -3061,9 +3069,10 @@ function handleServeCommand(string $baseDir, array $args): void
     $hotReloadEnabled = in_array($hotReloadEnabled, ['true', '1', 'yes', 'on'], true);
 
     // Default: enable auto-open browser, hot reload from .env (defaults to off)
-    $openBrowser = true;
-    $liveReload = $hotReloadEnabled; // Use .env setting as default
-    $portArg = '';
+    $openBrowser  = true;
+    $openNetwork  = false;   // --network/-n → open network IP instead of localhost
+    $liveReload   = $hotReloadEnabled;
+    $portArg      = '';
 
     // Parse arguments
     foreach ($args as $arg) {
@@ -3071,6 +3080,8 @@ function handleServeCommand(string $baseDir, array $args): void
             $openBrowser = false;
         } elseif (in_array(strtolower($arg), ['--open', '-o'])) {
             $openBrowser = true;
+        } elseif (in_array(strtolower($arg), ['--network', '-n'])) {
+            $openNetwork = true;   // open network IP URL in browser
         } elseif (in_array(strtolower($arg), ['--no-reload', '--no-live-reload'])) {
             $liveReload = false;
         } elseif (in_array(strtolower($arg), ['--reload', '-r', '--live-reload'])) {
@@ -3185,26 +3196,32 @@ function handleServeCommand(string $baseDir, array $args): void
     echo "\n";
 
     // Instructions
-    echo colorText("💡 ", 'yellow') . colorText("Press ", 'white') . colorText("Ctrl+C", 'yellow') . colorText(" to stop the server\n", 'white');
+    echo colorText("  Ctrl+C", 'yellow') . colorText(" to stop the server", 'white') . "\n";
+    if ($openBrowser && $openNetwork && $localIp) {
+        echo colorText("  Opening ", 'white') . colorText("http://{$localIp}:{$requestedPort}", 'cyan') . colorText(" in your browser (network mode)\n", 'white');
+    } elseif ($openBrowser) {
+        echo colorText("  Opening ", 'white') . colorText($url, 'cyan') . colorText(" in your browser\n", 'white');
+    }
     echo "\n";
 
     // Separator before server logs
-    echo colorText(str_repeat('━', $boxWidth) . "\n", 'cyan');
-    echo colorText("Server Logs:\n", 'green');
+    echo colorText(str_repeat('-', $boxWidth) . "\n", 'cyan');
+    echo colorText("  Server Logs:\n", 'green');
     echo "\n";
-    flush(); // Ensure all styled output is sent before server starts
+    flush();
 
     // Open browser automatically (with small delay to ensure server is ready)
     if ($openBrowser) {
-        // Wait 1.5 seconds for server to start, then open browser
+        // Prefer network URL if --network flag given and IP is available
+        $browserUrl = ($openNetwork && $localIp) ? "http://{$localIp}:{$requestedPort}" : $url;
+
         if (PHP_OS_FAMILY === 'Windows') {
-            // Use PowerShell for better cross-version compatibility
-            $psCommand = "Start-Sleep -Seconds 1.5; Start-Process '{$url}'";
-            startBackgroundProcess("powershell -Command \"{$psCommand}\"");
+            $psCommand = "Start-Sleep -Milliseconds 1500; Start-Process '{$browserUrl}'";
+            startBackgroundProcess("powershell -NoProfile -Command \"{$psCommand}\"");
         } elseif (PHP_OS_FAMILY === 'Darwin') {
-            startBackgroundProcess("sleep 1.5 && open \"{$url}\"");
+            startBackgroundProcess("sleep 1.5 && open \"{$browserUrl}\"");
         } else {
-            startBackgroundProcess("sleep 1.5 && xdg-open \"{$url}\"");
+            startBackgroundProcess("sleep 1.5 && xdg-open \"{$browserUrl}\"");
         }
     }
 
@@ -3360,10 +3377,17 @@ function supportsAnsi(): bool
     }
 
     if (DIRECTORY_SEPARATOR === '\\') {
+        // Try to enable VT100 on modern Windows (PHP 7.2+, Windows 10 1511+)
+        if (function_exists('sapi_windows_vt100_support')) {
+            if (@sapi_windows_vt100_support(STDOUT, true)) {
+                $supports = true;
+                return $supports;
+            }
+        }
         $supports = false !== getenv('ANSICON')
             || getenv('ConEmuANSI') === 'ON'
             || getenv('TERM') === 'xterm'
-            || function_exists('sapi_windows_vt100_support') && @sapi_windows_vt100_support(STDOUT);
+            || (function_exists('sapi_windows_vt100_support') && @sapi_windows_vt100_support(STDOUT));
     } else {
         $supports = true;
     }
@@ -3394,34 +3418,49 @@ function colorText(string $text, string $color = 'default'): string
 
 function printPalmBanner(string $subtitle = ''): void
 {
-    // Try to set UTF-8 encoding for better character display (Windows)
-    if (PHP_OS_FAMILY === 'Windows' && function_exists('mb_internal_encoding')) {
-        @mb_internal_encoding('UTF-8');
+    // On Windows, set console to UTF-8 code page and try to enable VT100
+    if (PHP_OS_FAMILY === 'Windows') {
+        @exec('chcp 65001 > nul 2>&1');          // UTF-8 code page
+        if (function_exists('sapi_windows_vt100_support')) {
+            @sapi_windows_vt100_support(STDOUT, true);
+        }
+        if (function_exists('mb_internal_encoding')) {
+            @mb_internal_encoding('UTF-8');
+        }
     }
 
-    $lines = [
-        "==============================================================",
-        "██████╗ ██╗  ██╗██████╗    ██████╗  █████╗ ██╗     ███╗   ███╗",
-        "██╔══██╗██║  ██║██╔══██╗   ██╔══██╗██╔══██╗██║     ████╗ ████║",
-        "██████╔╝███████║██████╔╝   ██████╔╝███████║██║     ██╔████╔██║",
-        "██╔═══╝ ██╔══██║██╔═══╝    ██╔═══╝ ██╔══██║██║     ██║╚██╔╝██║",
-        "██║     ██║  ██║██║        ██║     ██║  ██║███████╗██║ ╚═╝ ██║",
-        "╚═╝     ╚═╝  ╚═╝╚═╝        ╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝",
-        "==============================================================",
-    ];
+    $ansi = supportsAnsi();
 
-    $colors = ['cyan', 'cyan', 'magenta', 'magenta', 'yellow', 'yellow'];
-
-    echo "\n";
-    foreach ($lines as $index => $line) {
-        $color = $colors[$index] ?? 'cyan';
-        echo colorText($line . "\n", $color);
+    if ($ansi) {
+        // Full Unicode block-art banner (works in Windows Terminal, ConEmu, VSCode terminal)
+        $lines = [
+            ['=================================================================', 'cyan'],
+            ['  ____  _    _  ____    ____   _    _      __  __', 'cyan'],
+            [' |  _ \| |  | ||  _ \  |  _ \ / \  | |    |  \/  |', 'magenta'],
+            [' | |_) | |__| || |_) | | |_) / _ \ | |    | |\/| |', 'magenta'],
+            [' |  __/|  __  ||  __/  |  __/ ___ \| |___ | |  | |', 'yellow'],
+            [' |_|   |_|  |_||_|     |_|  /_/ \_\|_____||_|  |_|', 'yellow'],
+            ['=================================================================', 'cyan'],
+        ];
+        echo "\n";
+        foreach ($lines as [$line, $color]) {
+            echo colorText($line . "\n", $color);
+        }
+    } else {
+        // Plain ASCII fallback — safe for all Windows terminals & fonts
+        echo "\n";
+        echo "+-------------------------------------------------------+\n";
+        echo "|        PHP  PALM  FRAMEWORK                           |\n";
+        echo "+-------------------------------------------------------+\n";
     }
 
     if ($subtitle !== '') {
-        $subtitleText = "» {$subtitle}";
-        $padding = str_repeat(' ', max(0, 66 - strlen($subtitleText)));
-        echo colorText($subtitleText . $padding . "\n\n", 'green');
+        $subtitleText = "  >> {$subtitle}";
+        if ($ansi) {
+            echo colorText($subtitleText . "\n\n", 'green');
+        } else {
+            echo $subtitleText . "\n\n";
+        }
     } else {
         echo "\n";
     }

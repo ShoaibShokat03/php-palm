@@ -60,22 +60,36 @@ $requestUri = $_SERVER['REQUEST_URI'] ?? '/';
 $requestPath = parse_url($requestUri, PHP_URL_PATH) ?? '/';
 $publicFileServer = new PublicFileServer(__DIR__ . '/public');
 
+// -------- GLOBAL IP ACCESS CONTROL --------
+$appAccessConfig = require __DIR__ . '/config/app_access.php';
+
+// Get client IP (handle forwarded headers)
+$clientIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+if (isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+    $forwardedIps = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
+    $clientIp = trim($forwardedIps[0]);
+} elseif (isset($_SERVER['HTTP_X_REAL_IP'])) {
+    $clientIp = $_SERVER['HTTP_X_REAL_IP'];
+}
+
+// 1. Check Global Blocklist (Deny)
+$globalBlocklist = $appAccessConfig['global_blocklist'] ?? [];
+if (!empty($globalBlocklist) && in_array($clientIp, $globalBlocklist)) {
+    http_response_code(403);
+    die('Access Denied: Your IP address is blocked by the server administrator.');
+}
+
+// 2. Check Global Whitelist (Allow-only)
+$globalWhitelist = $appAccessConfig['global_whitelist'] ?? [];
+if (!empty($globalWhitelist) && !in_array($clientIp, $globalWhitelist) && !in_array('*', $globalWhitelist)) {
+    http_response_code(403);
+    die('Access Denied: Your IP address is not whitelisted for access.');
+}
+
 // -------- APP DIRECTORY ACCESS CONTROL (Early Block) --------
 // Block direct access to /app/ directory if configured
 if (strpos($requestPath, '/app/') === 0 || preg_match('#(/|^)app/#', $requestPath)) {
-    $appAccessConfig = require __DIR__ . '/config/app_access.php';
-
-
     if ($appAccessConfig['restrict_access']) {
-        // Get client IP (handle forwarded headers)
-        $clientIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-        if (isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-            $forwardedIps = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
-            $clientIp = trim($forwardedIps[0]);
-        } elseif (isset($_SERVER['HTTP_X_REAL_IP'])) {
-            $clientIp = $_SERVER['HTTP_X_REAL_IP'];
-        }
-
         $allowedIps = $appAccessConfig['allowed_ips'] ?? [];
         $allowInDev = $appAccessConfig['allow_in_dev'] ?? true;
 
@@ -379,7 +393,18 @@ try {
     header("X-XSS-Protection: 1; mode=block");
     header("Referrer-Policy: strict-origin-when-cross-origin");
     header("Permissions-Policy: geolocation=(), microphone=(), camera=()");
-    header("Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; base-uri 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com https://cdnjs.cloudflare.com; frame-src 'self' https:;");
+    // Generate CSP dynamically based on config (global fallback for $appAccessConfig)
+    if (!isset($appAccessConfig)) {
+        $appAccessConfig = require __DIR__ . '/config/app_access.php';
+    }
+    
+    $cspScripts = implode(' ', $appAccessConfig['csp_allowed_scripts'] ?? []);
+    $cspStyles = implode(' ', $appAccessConfig['csp_allowed_styles'] ?? []);
+    $cspFonts = implode(' ', $appAccessConfig['csp_allowed_fonts'] ?? []);
+
+    if ($appAccessConfig['enable_csp'] ?? false) {
+        header("Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; base-uri 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' $cspScripts; style-src 'self' 'unsafe-inline' $cspStyles; img-src 'self' data: https:; font-src 'self' data: $cspFonts; frame-src 'self' https:;");
+    }
 
     // 🛡 HSTS (HTTP Strict Transport Security) - Only on HTTPS
     if ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||

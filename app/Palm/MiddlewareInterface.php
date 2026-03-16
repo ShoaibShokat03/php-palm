@@ -13,6 +13,6 @@ interface MiddlewareInterface
      * @param callable $next Next middleware or route handler
      * @return mixed
      */
-    public function handle(callable $next): mixed;
+    public function handle(callable $next, ...$args): mixed;
 }
 

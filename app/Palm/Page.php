@@ -80,9 +80,9 @@ class Page
     public static function author(string $author): PageMeta
     {
         self::ensureInitialized();
-        self::$meta->author = $author;
-        return self::$meta;
+        return self::$meta->author($author);
     }
+
 
     /**
      * Set robots meta
@@ -90,9 +90,9 @@ class Page
     public static function robots(string $robots): PageMeta
     {
         self::ensureInitialized();
-        self::$meta->robots = $robots;
-        return self::$meta;
+        return self::$meta->robots($robots);
     }
+
 
     /**
      * Add custom meta tag

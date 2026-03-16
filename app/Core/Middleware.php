@@ -2,6 +2,8 @@
 
 namespace App\Core;
 
+use Frontend\Palm\MiddlewareInterface;
+
 /**
  * Base Middleware Class
  * All custom middlewares should extend this class
@@ -9,17 +11,17 @@ namespace App\Core;
  * This is the framework core - keep it minimal and stable
  * Developers create their own middlewares in the root/middlewares/ directory
  */
-abstract class Middleware
+abstract class Middleware implements MiddlewareInterface
 {
     /**
      * Handle the request
      * Override this method in your middleware
      * 
-     * @param callable $handler The route handler to wrap
-     * @param mixed ...$args Route parameters
+     * @param callable $next The route handler or next middleware
+     * @param mixed ...$args Route parameters (for API/Core routes)
      * @return mixed
      */
-    abstract public function handle(callable $handler, ...$args);
+    abstract public function handle(callable $next, ...$args): mixed;
 
     /**
      * Helper method to wrap a handler

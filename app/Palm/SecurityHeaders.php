@@ -103,26 +103,38 @@ class SecurityHeaders
      */
     public static function setDefaults(): void
     {
+        // Load dynamic CSP config
+        $configFile = __DIR__ . '/../../config/app_access.php';
+        $appAccessConfig = file_exists($configFile) ? include $configFile : [];
+        $cspScripts = implode(' ', $appAccessConfig['csp_allowed_scripts'] ?? []);
+        $cspStyles = implode(' ', $appAccessConfig['csp_allowed_styles'] ?? []);
+        $cspFonts = implode(' ', $appAccessConfig['csp_allowed_fonts'] ?? []);
+
         // Build CSP as a single string
         $cspPolicy = implode('; ', [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com",
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' $cspScripts",
+            "style-src 'self' 'unsafe-inline' $cspStyles",
             "img-src 'self' data: https:",
-            "font-src 'self' data: https://fonts.gstatic.com https://cdnjs.cloudflare.com",
+            "font-src 'self' data: $cspFonts",
             "connect-src 'self'",
             "frame-src 'self' https:",
             "frame-ancestors 'none'",
         ]);
 
-        self::set([
+        $headersList = [
             'content_type_options' => 'nosniff',
             'frame_options' => 'DENY',
             'xss_protection' => '1; mode=block',
             'referrer_policy' => 'strict-origin-when-cross-origin',
             'permissions_policy' => 'geolocation=(), microphone=(), camera=()',
-            'csp' => $cspPolicy, // Pass as string, not array
-        ]);
+        ];
+
+        if ($appAccessConfig['enable_csp'] ?? false) {
+            $headersList['csp'] = $cspPolicy;
+        }
+
+        self::set($headersList);
     }
 
     /**
